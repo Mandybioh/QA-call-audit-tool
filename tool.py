@@ -82,7 +82,7 @@ else:
     st.stop()
 
 
-st.image("logo_white.png", width=180)
+st.image("logo.png", width=180)
 
 st.set_page_config(page_title="QA Audio Call Selector", layout="wide")
 st.title("🎧 QA Audio Call Selector")

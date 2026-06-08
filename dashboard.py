@@ -84,7 +84,7 @@ elif user_role == "auditor":
     show_audit_form()
 
 # Display logo in the top right corner
-st.image("logo_white.png", width=180)
+st.image("logo.png", width=180)
 
 # Load and combine all audit log files into audit_data
 audit_files = glob.glob("audit_log_*.xlsx")
