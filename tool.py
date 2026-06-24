@@ -81,8 +81,7 @@ else:
         st.warning("Enter login details")
     st.stop()
 
-
-st.image("logo.png", width=180)
+st.image("logos\\logo.png", width=180)
 
 st.set_page_config(page_title="QA Audio Call Selector", layout="wide")
 st.title("🎧 QA Audio Call Selector")
@@ -146,7 +145,7 @@ if folder_path and os.path.isdir(folder_path):
         df["Base"] = df["File_Name"].str.rsplit(".", n=1).str[0]
 
         # Agent: first segment before the first underscore
-        df["Agent"] = df["Base"].str.split("_").str[0].fillna("Unknown").replace("", "Unknown")
+        df["Agent"] = df["Base"].str.split("_").str[0].str.strip("[]").fillna("Unknown").replace("", "Unknown")
 
         # extract date from the third segment (after second "_"), with common-format fallbacks
         def _extract_date_from_base(base):

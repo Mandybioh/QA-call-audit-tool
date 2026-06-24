@@ -9,6 +9,8 @@ import io
 import re
 from extra_streamlit_components import CookieManager
 
+st.set_page_config(page_title="QA Audit Dashboard", layout="wide")
+
 # --- User Authentication and RBAC ---
 import streamlit_authenticator as stauth
 
@@ -83,11 +85,8 @@ elif user_role == "supervisor":
 elif user_role == "auditor":
     show_audit_form()
 
-# Display logo in the top right corner
-st.image("logo.png", width=180)
-
 # Load and combine all audit log files into audit_data
-audit_files = glob.glob("audit_log_*.xlsx")
+audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
 if not audit_files:
     st.error("No audit log files found. Please ensure audit_log_*.xlsx files are present.")
     st.stop()
@@ -103,7 +102,6 @@ if not dfs:
     st.stop()
 audit_data = pd.concat(dfs, ignore_index=True)
 
-st.set_page_config(page_title="QA Audit Dashboard", layout="wide")
 st.title("📊 QA Audit Dashboard")
 
 # Date range filter setup (must come after audit_data is defined)
@@ -420,7 +418,7 @@ with tab4:
                 with col2:
                     st.write(f"**Agent:** {row['Name of Call Centre Officer']}")
                 with col3:
-                    st.write(f"**File:** {row['File_Name']}")
+                    st.write(f"**File:** {row[file_col] if file_col and file_col in row else 'N/A'}")
                 st.info(f"{row[comments_col]}")
                 st.divider()
     else:
@@ -706,4 +704,4 @@ with tab5:
         data=excel_buffer,
         file_name=f"qa_audit_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
-        )
+    )
