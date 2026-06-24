@@ -917,10 +917,11 @@ elif app_mode == "📊 Dashboard":
                 cell.fill = blue_fill
                 cell.border = thin_border
             
-            # Row 3: Performance percentages for each metric
-            performance_percentages = [0.76, 0.49, 0.94, 0.97, 0.51, 0.86, 0.79, 0.91, 0.94, 0.44, 0.81, 0.60]
-            for col_idx, perf in enumerate(performance_percentages, start=12):  # Start at column L (12)
-                cell = ws1.cell(row=3, column=col_idx, value=perf)
+            # Row 3: Performance percentages for each metric (calculated from AVERAGE/max_score)
+            col_letters = ['L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W']
+            for col_idx, col_letter in enumerate(col_letters, start=12):  # Start at column L (12)
+                cell = ws1.cell(row=3, column=col_idx)
+                cell.value = f'=AVERAGE({col_letter}6:{col_letter}85)/{col_letter}2'
                 cell.number_format = '0%'
                 cell.font = bold_black_font
                 cell.alignment = Alignment(horizontal='center')
@@ -1183,22 +1184,38 @@ elif app_mode == "📊 Dashboard":
             from openpyxl.chart import BarChart, LineChart, Reference, PieChart
             ws_charts = writer.book.create_sheet('Charts & Summary')
             
-            # Create data for charts in this sheet
-            # Metric data for chart
-            ws_charts.cell(row=2, column=1, value='Quality Metrics Summary')
-            ws_charts.cell(row=2, column=1).font = Font(bold=True, size=14, color='FFFFFF')
-            ws_charts.cell(row=2, column=1).fill = green_header
+            # Organize metrics by category
+            intro_conclusion = [
+                ('Call opening', metric_performance[0][1]),
+                ('Call closure', metric_performance[1][1])
+            ]
             
-            # Metric names and scores in columns A and B starting at row 3
-            for idx, (metric_name, perf) in enumerate(metric_performance, start=3):
+            problem_solving = [
+                ('Identification of customer needs', metric_performance[2][1]),
+                ('Educate & Inform', metric_performance[3][1]),
+                ('Necessary steps to query resolution', metric_performance[4][1]),
+                ('Initiative', metric_performance[5][1]),
+                ('Identifying further needs', metric_performance[6][1])
+            ]
+            
+            soft_skills = [
+                ('Effective communication', metric_performance[7][1]),
+                ('Professionalism', metric_performance[8][1]),
+                ('Effective listening & troubleshooting', metric_performance[9][1]),
+                ('Politeness & courtesy', metric_performance[10][1]),
+                ('Empathy', metric_performance[11][1])
+            ]
+            
+            # ===== Chart 1: Overall Performance =====
+            chart1_row = 2
+            ws_charts.cell(row=chart1_row, column=1, value='Overall Performance').font = Font(bold=True, size=11)
+            for idx, (metric_name, perf) in enumerate(metric_performance, start=chart1_row + 1):
                 ws_charts.cell(row=idx, column=1, value=metric_name).font = black_font
                 ws_charts.cell(row=idx, column=1).border = thin_border
                 score_cell = ws_charts.cell(row=idx, column=2, value=perf)
                 score_cell.font = black_font
                 score_cell.number_format = '0%'
                 score_cell.border = thin_border
-                
-                # Color code based on performance
                 if perf >= 0.75:
                     score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
                 elif perf >= 0.50:
@@ -1206,75 +1223,118 @@ elif app_mode == "📊 Dashboard":
                 else:
                     score_cell.fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
             
-            # Create bar chart for metrics
-            bar_chart = BarChart()
-            bar_chart.type = "col"
-            bar_chart.title = "Quality Metrics Performance"
-            bar_chart.y_axis.title = 'Performance %'
-            bar_chart.x_axis.title = 'Metrics'
+            # Create Overall Performance chart
+            chart1 = BarChart()
+            chart1.type = "col"
+            chart1.title = "Overall Performance"
+            chart1.y_axis.title = 'Performance %'
+            data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
+            cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
+            chart1.add_data(data1, titles_from_data=True)
+            chart1.set_categories(cats1)
+            chart1.height = 9
+            chart1.width = 18
+            chart1.series[0].graphicalProperties.solidFill = "00B0F0"
+            ws_charts.add_chart(chart1, "D2")
             
-            data = Reference(ws_charts, min_col=2, min_row=2, max_row=len(metric_performance) + 2)
-            cats = Reference(ws_charts, min_col=1, min_row=3, max_row=len(metric_performance) + 2)
-            bar_chart.add_data(data, titles_from_data=True)
-            bar_chart.set_categories(cats)
-            bar_chart.height = 10
-            bar_chart.width = 20
-            bar_chart.series[0].graphicalProperties.solidFill = "00B0F0"
-            ws_charts.add_chart(bar_chart, "D2")
-            
-            # Agent performance data
-            row_offset = len(metric_performance) + 5
-            ws_charts.cell(row=row_offset, column=1, value='Agent Performance')
-            ws_charts.cell(row=row_offset, column=1).font = Font(bold=True, size=12, color='FFFFFF')
-            ws_charts.cell(row=row_offset, column=1).fill = green_header
-            
-            agent_stats = filtered_data.groupby('Name of Call Centre Officer').agg({
-                'Total Score': 'mean'
-            }).reset_index().sort_values('Total Score', ascending=False)
-            
-            for idx, row in agent_stats.iterrows():
-                ws_charts.cell(row=row_offset + idx + 1, column=1, value=row['Name of Call Centre Officer']).border = thin_border
-                score_cell = ws_charts.cell(row=row_offset + idx + 1, column=2, value=row['Total Score'])
+            # ===== Chart 2: Introduction and Conclusion =====
+            chart2_row = chart1_row + len(metric_performance) + 3
+            ws_charts.cell(row=chart2_row, column=1, value='Introduction & Conclusion').font = Font(bold=True, size=11)
+            for idx, (metric_name, perf) in enumerate(intro_conclusion, start=chart2_row + 1):
+                ws_charts.cell(row=idx, column=1, value=metric_name).font = black_font
+                ws_charts.cell(row=idx, column=1).fill = blue_fill
+                ws_charts.cell(row=idx, column=1).border = thin_border
+                score_cell = ws_charts.cell(row=idx, column=2, value=perf)
+                score_cell.font = black_font
+                score_cell.number_format = '0%'
                 score_cell.border = thin_border
-                score_cell.number_format = '0.0'
+                if perf >= 0.75:
+                    score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
+                elif perf >= 0.50:
+                    score_cell.fill = PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid')
+                else:
+                    score_cell.fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
             
-            # Create bar chart for agents
-            agent_chart = BarChart()
-            agent_chart.type = "col"
-            agent_chart.title = "Average Score by Agent"
-            agent_chart.y_axis.title = 'Average Score'
-            agent_chart.x_axis.title = 'Agents'
+            # Create Introduction & Conclusion chart
+            chart2 = BarChart()
+            chart2.type = "col"
+            chart2.title = "Introduction & Conclusion"
+            chart2.y_axis.title = 'Performance %'
+            data2 = Reference(ws_charts, min_col=2, min_row=chart2_row, max_row=chart2_row + len(intro_conclusion))
+            cats2 = Reference(ws_charts, min_col=1, min_row=chart2_row + 1, max_row=chart2_row + len(intro_conclusion))
+            chart2.add_data(data2, titles_from_data=True)
+            chart2.set_categories(cats2)
+            chart2.height = 9
+            chart2.width = 18
+            chart2.series[0].graphicalProperties.solidFill = "00B0F0"
+            ws_charts.add_chart(chart2, "J2")
             
-            data_agents = Reference(ws_charts, min_col=2, min_row=row_offset, max_row=row_offset + len(agent_stats))
-            cats_agents = Reference(ws_charts, min_col=1, min_row=row_offset + 1, max_row=row_offset + len(agent_stats))
-            agent_chart.add_data(data_agents, titles_from_data=True)
-            agent_chart.set_categories(cats_agents)
-            agent_chart.height = 10
-            agent_chart.width = 20
-            agent_chart.series[0].graphicalProperties.solidFill = "92D050"
-            ws_charts.add_chart(agent_chart, "D" + str(row_offset + 2))
+            # ===== Chart 3: Problem Solving =====
+            chart3_row = chart2_row + len(intro_conclusion) + 3
+            ws_charts.cell(row=chart3_row, column=1, value='Problem Solving').font = Font(bold=True, size=11)
+            for idx, (metric_name, perf) in enumerate(problem_solving, start=chart3_row + 1):
+                ws_charts.cell(row=idx, column=1, value=metric_name).font = black_font
+                ws_charts.cell(row=idx, column=1).fill = light_green_fill
+                ws_charts.cell(row=idx, column=1).border = thin_border
+                score_cell = ws_charts.cell(row=idx, column=2, value=perf)
+                score_cell.font = black_font
+                score_cell.number_format = '0%'
+                score_cell.border = thin_border
+                if perf >= 0.75:
+                    score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
+                elif perf >= 0.50:
+                    score_cell.fill = PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid')
+                else:
+                    score_cell.fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
             
-            # Key metrics summary
-            summary_row = row_offset + len(agent_stats) + 3
-            ws_charts.cell(row=summary_row, column=1, value='Key Metrics Summary')
-            ws_charts.cell(row=summary_row, column=1).font = Font(bold=True, size=12, color='FFFFFF')
-            ws_charts.cell(row=summary_row, column=1).fill = green_header
+            # Create Problem Solving chart
+            chart3 = BarChart()
+            chart3.type = "col"
+            chart3.title = "Problem Solving"
+            chart3.y_axis.title = 'Performance %'
+            data3 = Reference(ws_charts, min_col=2, min_row=chart3_row, max_row=chart3_row + len(problem_solving))
+            cats3 = Reference(ws_charts, min_col=1, min_row=chart3_row + 1, max_row=chart3_row + len(problem_solving))
+            chart3.add_data(data3, titles_from_data=True)
+            chart3.set_categories(cats3)
+            chart3.height = 9
+            chart3.width = 18
+            chart3.series[0].graphicalProperties.solidFill = "A9D18E"
+            ws_charts.add_chart(chart3, "D" + str(chart2_row + 2))
             
-            ws_charts.cell(row=summary_row + 1, column=1, value='Total Calls Audited:').font = bold_black_font
-            ws_charts.cell(row=summary_row + 1, column=2, value=total_records).font = black_font
+            # ===== Chart 4: Soft Skills =====
+            chart4_row = chart3_row + len(problem_solving) + 3
+            ws_charts.cell(row=chart4_row, column=1, value='Soft Skills').font = Font(bold=True, size=11)
+            for idx, (metric_name, perf) in enumerate(soft_skills, start=chart4_row + 1):
+                ws_charts.cell(row=idx, column=1, value=metric_name).font = black_font
+                ws_charts.cell(row=idx, column=1).fill = gold_fill
+                ws_charts.cell(row=idx, column=1).border = thin_border
+                score_cell = ws_charts.cell(row=idx, column=2, value=perf)
+                score_cell.font = black_font
+                score_cell.number_format = '0%'
+                score_cell.border = thin_border
+                if perf >= 0.75:
+                    score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
+                elif perf >= 0.50:
+                    score_cell.fill = PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid')
+                else:
+                    score_cell.fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
             
-            ws_charts.cell(row=summary_row + 2, column=1, value='Average Total Score:').font = bold_black_font
-            avg_score_val = filtered_data['Total Score'].mean()
-            ws_charts.cell(row=summary_row + 2, column=2, value=round(avg_score_val, 2)).font = black_font
-            
-            ws_charts.cell(row=summary_row + 3, column=1, value='Unique Agents:').font = bold_black_font
-            ws_charts.cell(row=summary_row + 3, column=2, value=filtered_data['Name of Call Centre Officer'].nunique()).font = black_font
-            
-            ws_charts.cell(row=summary_row + 4, column=1, value='Fatal Errors:').font = bold_black_font
-            ws_charts.cell(row=summary_row + 4, column=2, value=int(fatal_count)).font = black_font
+            # Create Soft Skills chart
+            chart4 = BarChart()
+            chart4.type = "col"
+            chart4.title = "Soft Skills"
+            chart4.y_axis.title = 'Performance %'
+            data4 = Reference(ws_charts, min_col=2, min_row=chart4_row, max_row=chart4_row + len(soft_skills))
+            cats4 = Reference(ws_charts, min_col=1, min_row=chart4_row + 1, max_row=chart4_row + len(soft_skills))
+            chart4.add_data(data4, titles_from_data=True)
+            chart4.set_categories(cats4)
+            chart4.height = 9
+            chart4.width = 18
+            chart4.series[0].graphicalProperties.solidFill = "FFC000"
+            ws_charts.add_chart(chart4, "J" + str(chart2_row + 2))
             
             # Set column widths
-            ws_charts.column_dimensions['A'].width = 35
+            ws_charts.column_dimensions['A'].width = 40
             ws_charts.column_dimensions['B'].width = 15
         
         excel_buffer.seek(0)

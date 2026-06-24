@@ -360,7 +360,7 @@ if folder_path and os.path.isdir(folder_path):
                         else:
                             form_data[f"{q}_{i}"] = col2.selectbox(label, options, index=idx_default, key=f"{q}_input_{i}")
 
-                with st.expander("📝 Additional Info", expanded=False):
+                with st.expander("📝 Additional Info", expanded=False):+
                     form_data[f"comments_{i}"] = st.text_area(f"Comments", value=st.session_state[f"comments_{i}"], key=f"comments_input_{i}")
 
                 st.divider()
@@ -386,6 +386,7 @@ if folder_path and os.path.isdir(folder_path):
                     selected_save.at[i, 'Type of caller'] = form_data.get(f"caller_type_{i}", '')
                     selected_save.at[i, 'Name of caller'] = form_data.get(f"caller_name_{i}", '')
                     selected_save.at[i, "Caller's phone number"] = form_data.get(f"caller_phone_{i}", '')
+                    
                     selected_save.at[i, "Caller's organization/Name of facility"] = form_data.get(f"caller_org_{i}", '')
                     selected_save.at[i, 'Language spoken'] = form_data.get(f"language_{i}", '')
                     selected_save.at[i, 'Purpose of call'] = form_data.get(f"purpose_{i}", '')
