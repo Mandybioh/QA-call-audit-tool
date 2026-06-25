@@ -429,14 +429,14 @@ with tab5:
     st.subheader("Raw Audit Data")
 
     # Display key columns
-    display_cols = ['Id', 'Name', 'Date of interaction', 'Name of Call Centre Officer',
+    display_cols = ['Id', 'Name', 'Date of interaction', 'AHT (seconds)', 'Audit_Timestamp', 'Name of Call Centre Officer',
                     'Name of caller', 'Purpose of call',
                     'Did CCO open the call using the appropriate greetings?',
                     'Was the CCO able to identify and verify the needs of the customer?',
                     'Was the CCO able to educate & inform the customer about the query/enquiry/request',
                     'Did the CCO ensure and confirm the necessary steps to query resolution?',
-                    'Was the CCO polite & courteous?', 'Total Score', 'QI Score',
-                    'Do you have any other comments you would like to share?', 'Audit_Timestamp']
+                    'Was the CCO polite & courteous?', 'Total Score', 'QA Score',
+                    'Do you have any other comments you would like to share?']
 
     # Only show columns that exist in the data
     available_cols = [col for col in display_cols if col in filtered_data.columns]
@@ -566,7 +566,7 @@ with tab5:
             cell.border = thin_border
         
         # Row 3: Summary data with borders
-        cell_b3 = ws_trend.cell(row=3, column=2, value='QI Audit')
+        cell_b3 = ws_trend.cell(row=3, column=2, value='QA Audit')
         cell_b3.font = black_font
         cell_b3.alignment = Alignment(horizontal='left')
         cell_b3.border = thin_border

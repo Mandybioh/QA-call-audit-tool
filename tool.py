@@ -360,7 +360,7 @@ if folder_path and os.path.isdir(folder_path):
                         else:
                             form_data[f"{q}_{i}"] = col2.selectbox(label, options, index=idx_default, key=f"{q}_input_{i}")
 
-                with st.expander("📝 Additional Info", expanded=False):+
+                with st.expander("📝 Additional Info", expanded=False):
                     form_data[f"comments_{i}"] = st.text_area(f"Comments", value=st.session_state[f"comments_{i}"], key=f"comments_input_{i}")
 
                 st.divider()

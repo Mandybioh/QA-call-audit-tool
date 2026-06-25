@@ -1067,6 +1067,8 @@ elif app_mode == "📊 Dashboard":
                 cell.font = black_font
                 cell.alignment = Alignment(horizontal='center')
                 cell.border = thin_border
+                cell.number_format = '0.00%'
+                cell.number_format = '0.00%'
             
             # Row 4: Fatal count with borders
             cell_b4 = ws_trend.cell(row=4, column=2, value='Fatal count')
@@ -1094,6 +1096,103 @@ elif app_mode == "📊 Dashboard":
             cell_c5.font = black_font
             cell_c5.alignment = Alignment(horizontal='right')
             cell_c5.border = thin_border
+            
+            # ===== Category Performance Summary (Starting at B10) =====
+            # Row 10: Introduction & Conclusion header
+            intro_header = ws_trend.cell(row=10, column=2, value='Introduction & Conclusion')
+            intro_header.fill = blue_fill
+            intro_header.font = white_font
+            intro_header.border = thin_border
+            intro_header.alignment = Alignment(horizontal='center')
+            
+            # Merge cells for header if needed - add second column header
+            call_open_header = ws_trend.cell(row=10, column=3, value='Call opening')
+            call_open_header.fill = blue_fill
+            call_open_header.font = white_font
+            call_open_header.border = thin_border
+            call_open_header.alignment = Alignment(horizontal='center')
+            
+            call_close_header = ws_trend.cell(row=10, column=4, value='Call closure')
+            call_close_header.fill = blue_fill
+            call_close_header.font = white_font
+            call_close_header.border = thin_border
+            call_close_header.alignment = Alignment(horizontal='center')
+            
+            # Row 11: Date row for Introduction & Conclusion
+            ws_trend.cell(row=11, column=2, value='Jun-26').font = black_font
+            date_open = ws_trend.cell(row=11, column=3, value=metric_performance[0][1])
+            date_open.font = black_font
+            date_open.number_format = '0.00%'
+            date_open.border = thin_border
+            date_open.alignment = Alignment(horizontal='center')
+            
+            date_close = ws_trend.cell(row=11, column=4, value=metric_performance[1][1])
+            date_close.font = black_font
+            date_close.number_format = '0.00%'
+            date_close.border = thin_border
+            date_close.alignment = Alignment(horizontal='center')
+            
+            # Row 13: Problem solving header
+            ps_header = ws_trend.cell(row=13, column=2, value='Problem solving')
+            ps_header.fill = light_green_fill
+            ps_header.font = bold_black_font
+            ps_header.border = thin_border
+            ps_header.alignment = Alignment(horizontal='center')
+            
+            # Row 13: Problem solving metric headers
+            ps_metrics = [
+                ('Identification of customer needs', 2),
+                ('Educate & Inform', 3),
+                ('Necessary steps to query resolution', 4),
+                ('Initiative', 5),
+                ('Identifying further needs', 6)
+            ]
+            for metric_name, col_idx in ps_metrics:
+                cell = ws_trend.cell(row=13, column=col_idx, value=metric_name)
+                cell.fill = light_green_fill
+                cell.font = bold_black_font
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='center', wrap_text=True)
+            
+            # Row 14: Date row for Problem solving
+            ws_trend.cell(row=14, column=2, value='Jun-26').font = black_font
+            for idx, (metric_name, col_idx) in enumerate(ps_metrics):
+                perf_cell = ws_trend.cell(row=14, column=col_idx, value=metric_performance[2+idx][1])
+                perf_cell.font = black_font
+                perf_cell.number_format = '0.00%'
+                perf_cell.border = thin_border
+                perf_cell.alignment = Alignment(horizontal='center')
+            
+            # Row 16: Soft skills header
+            ss_header = ws_trend.cell(row=16, column=2, value='Soft skills')
+            ss_header.fill = gold_fill
+            ss_header.font = bold_black_font
+            ss_header.border = thin_border
+            ss_header.alignment = Alignment(horizontal='center')
+            
+            # Row 16: Soft skills metric headers
+            ss_metrics = [
+                ('Effective communication', 2),
+                ('Professionalism', 3),
+                ('Effective listening & troubleshooting', 4),
+                ('Politeness & courtesy', 5),
+                ('Empathy', 6)
+            ]
+            for metric_name, col_idx in ss_metrics:
+                cell = ws_trend.cell(row=16, column=col_idx, value=metric_name)
+                cell.fill = gold_fill
+                cell.font = bold_black_font
+                cell.border = thin_border
+                cell.alignment = Alignment(horizontal='center', wrap_text=True)
+            
+            # Row 17: Date row for Soft skills
+            ws_trend.cell(row=17, column=2, value='Jun-26').font = black_font
+            for idx, (metric_name, col_idx) in enumerate(ss_metrics):
+                perf_cell = ws_trend.cell(row=17, column=col_idx, value=metric_performance[7+idx][1])
+                perf_cell.font = black_font
+                perf_cell.number_format = '0.00%'
+                perf_cell.border = thin_border
+                perf_cell.alignment = Alignment(horizontal='center')
             
             # ===== SHEET 4: Team Performance =====
             ws_team = writer.book.create_sheet('Team performance')
@@ -1131,6 +1230,7 @@ elif app_mode == "📊 Dashboard":
                 cell_c = ws_team.cell(row=row_idx, column=3, value=perf)
                 cell_c.font = black_font
                 cell_c.border = thin_border
+                cell_c.number_format = '0.00%'
             
             # Introduction & Conclusion (F3:G) with borders
             intro_data = [
@@ -1145,6 +1245,7 @@ elif app_mode == "📊 Dashboard":
                 cell_g = ws_team.cell(row=row_idx, column=7, value=perf)
                 cell_g.font = black_font
                 cell_g.border = thin_border
+                cell_g.number_format = '0.00%'
             
             # Problem solving (I3:J) with borders
             problem_data = [
@@ -1162,6 +1263,7 @@ elif app_mode == "📊 Dashboard":
                 cell_j = ws_team.cell(row=row_idx, column=10, value=perf)
                 cell_j.font = black_font
                 cell_j.border = thin_border
+                cell_j.number_format = '0.00%'
             
             # Soft skills (M3:N) with borders
             soft_skills_data = [
@@ -1179,6 +1281,7 @@ elif app_mode == "📊 Dashboard":
                 cell_n = ws_team.cell(row=row_idx, column=14, value=perf)
                 cell_n.font = black_font
                 cell_n.border = thin_border
+                cell_n.number_format = '0.00%'
             
             # ===== SHEET 5: Charts & Summary =====
             from openpyxl.chart import BarChart, LineChart, Reference, PieChart
@@ -1214,7 +1317,7 @@ elif app_mode == "📊 Dashboard":
                 ws_charts.cell(row=idx, column=1).border = thin_border
                 score_cell = ws_charts.cell(row=idx, column=2, value=perf)
                 score_cell.font = black_font
-                score_cell.number_format = '0%'
+                score_cell.number_format = '0.00%'
                 score_cell.border = thin_border
                 if perf >= 0.75:
                     score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
@@ -1228,13 +1331,25 @@ elif app_mode == "📊 Dashboard":
             chart1.type = "col"
             chart1.title = "Overall Performance"
             chart1.y_axis.title = 'Performance %'
+            chart1.x_axis.title = 'Metrics'
+            # Format axis titles with bold font and size
+            from openpyxl.chart.text import RichText
+            from openpyxl.drawing.text import Paragraph, CellAnchor, ParagraphProperties, CharacterProperties
+            chart1.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart1.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart1.x_axis.tickLblPos = "low"
+            chart1.x_axis.delete = False
             data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
             cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
             chart1.add_data(data1, titles_from_data=True)
             chart1.set_categories(cats1)
             chart1.height = 9
             chart1.width = 18
-            chart1.series[0].graphicalProperties.solidFill = "00B0F0"
+            chart1.series[0].graphicalProperties.solidFill = "006400"
+            # Add data labels with percentages
+            from openpyxl.chart.label import DataLabelList
+            chart1.dataLabels = DataLabelList()
+            chart1.dataLabels.showVal = True
             ws_charts.add_chart(chart1, "D2")
             
             # ===== Chart 2: Introduction and Conclusion =====
@@ -1246,7 +1361,7 @@ elif app_mode == "📊 Dashboard":
                 ws_charts.cell(row=idx, column=1).border = thin_border
                 score_cell = ws_charts.cell(row=idx, column=2, value=perf)
                 score_cell.font = black_font
-                score_cell.number_format = '0%'
+                score_cell.number_format = '0.00%'
                 score_cell.border = thin_border
                 if perf >= 0.75:
                     score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
@@ -1260,6 +1375,12 @@ elif app_mode == "📊 Dashboard":
             chart2.type = "col"
             chart2.title = "Introduction & Conclusion"
             chart2.y_axis.title = 'Performance %'
+            chart2.x_axis.title = 'Metrics'
+            # Format axis titles
+            chart2.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart2.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart2.x_axis.tickLblPos = "low"
+            chart2.x_axis.delete = False
             data2 = Reference(ws_charts, min_col=2, min_row=chart2_row, max_row=chart2_row + len(intro_conclusion))
             cats2 = Reference(ws_charts, min_col=1, min_row=chart2_row + 1, max_row=chart2_row + len(intro_conclusion))
             chart2.add_data(data2, titles_from_data=True)
@@ -1267,6 +1388,9 @@ elif app_mode == "📊 Dashboard":
             chart2.height = 9
             chart2.width = 18
             chart2.series[0].graphicalProperties.solidFill = "00B0F0"
+            # Add data labels with percentages
+            chart2.dataLabels = DataLabelList()
+            chart2.dataLabels.showVal = True
             ws_charts.add_chart(chart2, "J2")
             
             # ===== Chart 3: Problem Solving =====
@@ -1278,7 +1402,7 @@ elif app_mode == "📊 Dashboard":
                 ws_charts.cell(row=idx, column=1).border = thin_border
                 score_cell = ws_charts.cell(row=idx, column=2, value=perf)
                 score_cell.font = black_font
-                score_cell.number_format = '0%'
+                score_cell.number_format = '0.00%'
                 score_cell.border = thin_border
                 if perf >= 0.75:
                     score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
@@ -1292,6 +1416,12 @@ elif app_mode == "📊 Dashboard":
             chart3.type = "col"
             chart3.title = "Problem Solving"
             chart3.y_axis.title = 'Performance %'
+            chart3.x_axis.title = 'Metrics'
+            # Format axis titles
+            chart3.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart3.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart3.x_axis.tickLblPos = "low"
+            chart3.x_axis.delete = False
             data3 = Reference(ws_charts, min_col=2, min_row=chart3_row, max_row=chart3_row + len(problem_solving))
             cats3 = Reference(ws_charts, min_col=1, min_row=chart3_row + 1, max_row=chart3_row + len(problem_solving))
             chart3.add_data(data3, titles_from_data=True)
@@ -1299,6 +1429,9 @@ elif app_mode == "📊 Dashboard":
             chart3.height = 9
             chart3.width = 18
             chart3.series[0].graphicalProperties.solidFill = "A9D18E"
+            # Add data labels with percentages
+            chart3.dataLabels = DataLabelList()
+            chart3.dataLabels.showVal = True
             ws_charts.add_chart(chart3, "D" + str(chart2_row + 2))
             
             # ===== Chart 4: Soft Skills =====
@@ -1310,7 +1443,7 @@ elif app_mode == "📊 Dashboard":
                 ws_charts.cell(row=idx, column=1).border = thin_border
                 score_cell = ws_charts.cell(row=idx, column=2, value=perf)
                 score_cell.font = black_font
-                score_cell.number_format = '0%'
+                score_cell.number_format = '0.00%'
                 score_cell.border = thin_border
                 if perf >= 0.75:
                     score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
@@ -1324,6 +1457,12 @@ elif app_mode == "📊 Dashboard":
             chart4.type = "col"
             chart4.title = "Soft Skills"
             chart4.y_axis.title = 'Performance %'
+            chart4.x_axis.title = 'Metrics'
+            # Format axis titles
+            chart4.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart4.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
+            chart4.x_axis.tickLblPos = "low"
+            chart4.x_axis.delete = False
             data4 = Reference(ws_charts, min_col=2, min_row=chart4_row, max_row=chart4_row + len(soft_skills))
             cats4 = Reference(ws_charts, min_col=1, min_row=chart4_row + 1, max_row=chart4_row + len(soft_skills))
             chart4.add_data(data4, titles_from_data=True)
@@ -1331,6 +1470,9 @@ elif app_mode == "📊 Dashboard":
             chart4.height = 9
             chart4.width = 18
             chart4.series[0].graphicalProperties.solidFill = "FFC000"
+            # Add data labels with percentages
+            chart4.dataLabels = DataLabelList()
+            chart4.dataLabels.showVal = True
             ws_charts.add_chart(chart4, "J" + str(chart2_row + 2))
             
             # Set column widths
