@@ -15,6 +15,8 @@ for row in ws_ip.iter_rows(min_row=1, max_row=12):
     for cell in row:
         print(f"{cell.coordinate}: '{cell.value}' | Font: {cell.font.name if cell.font else 'None'}, Bold: {cell.font.bold if cell.font else 'None'}, Color: {cell.font.color if cell.font else 'None'} | Fill: {cell.fill.start_color.rgb if cell.fill and cell.fill.start_color else 'None'}")
     print()
+    
+    #ag
 
 print()
 print("=== TREND SHEET - Merged Cells ===")

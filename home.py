@@ -11,8 +11,14 @@ from extra_streamlit_components import CookieManager
 
 st.set_page_config(page_title="QA Audit Platform", layout="wide")
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+LOGO_PATH = os.path.join(BASE_DIR, "Logos", "logo.png")
+
 # --- User Authentication and RBAC ---
 import streamlit_authenticator as stauth
+
+SHARED_COOKIE_NAME = "qa_audit_platform_session"
+SHARED_COOKIE_KEY = "qa_audit_platform_cookie_key_2026_secure"
 
 # Define credentials dictionary for streamlit-authenticator >=0.4.2
 credentials = {
@@ -36,8 +42,8 @@ cookie_manager = CookieManager(key="qa_app_home_cookie_manager")
 
 authenticator = stauth.Authenticate(
     credentials=credentials,
-    cookie_name="qa_app_home",
-    key="qa_app_home_auth",
+    cookie_name=SHARED_COOKIE_NAME,
+    key=SHARED_COOKIE_KEY,
     expiry_days=1,
     cookie_manager=cookie_manager
 )
@@ -69,13 +75,35 @@ elif authentication_status is None:
 # If we reach here, user is authenticated
 st.sidebar.success(f"Welcome {name}!")
 
+# Keep app mode state separate from widget key so buttons can switch views safely.
+if "app_mode" not in st.session_state:
+    st.session_state.app_mode = "🏠 Home"
+if "app_mode_selector" not in st.session_state:
+    st.session_state.app_mode_selector = st.session_state.app_mode
+
+# Defer selector updates requested by buttons so updates happen
+# before the widget is instantiated on the next rerun.
+if st.session_state.get("_sync_app_mode_selector", False):
+    st.session_state.app_mode_selector = st.session_state.app_mode
+    st.session_state._sync_app_mode_selector = False
+
+if os.path.exists(LOGO_PATH):
+    try:
+        with open(LOGO_PATH, "rb") as logo_file:
+            st.sidebar.image(logo_file.read(), use_container_width=True)
+    except OSError:
+        pass
+
 # Navigation menu
 st.sidebar.title("📋 Navigation")
-app_mode = st.sidebar.radio(
+selected_mode = st.sidebar.radio(
     "Select View:",
     ["🏠 Home", "🛠️ Tool", "📊 Dashboard"],
-    key="app_mode"
+    key="app_mode_selector"
 )
+if selected_mode != st.session_state.app_mode:
+    st.session_state.app_mode = selected_mode
+app_mode = st.session_state.app_mode
 
 # User role
 user_role = get_user_role(username)
@@ -99,12 +127,14 @@ if app_mode == "🏠 Home":
         st.info("### 📊 Dashboard\nView and analyze audit data with interactive visualizations and performance metrics.")
         if st.button("Go to Dashboard", key="btn_dashboard"):
             st.session_state.app_mode = "📊 Dashboard"
+            st.session_state._sync_app_mode_selector = True
             st.rerun()
     
     with col2:
         st.info("### 🛠️ Tool\nManage and process audit calls with advanced tools and utilities.")
         if st.button("Go to Tool", key="btn_tool"):
             st.session_state.app_mode = "🛠️ Tool"
+            st.session_state._sync_app_mode_selector = True
             st.rerun()
     
     with col3:
@@ -841,6 +871,7 @@ elif app_mode == "📊 Dashboard":
         excel_buffer = io.BytesIO()
         from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
         from openpyxl import load_workbook
+        from openpyxl.drawing.image import Image as XLImage
         from datetime import datetime
         
         # Get current month/year for sheet name
@@ -888,6 +919,18 @@ elif app_mode == "📊 Dashboard":
             
             # Format Sheet 1 headers with colors and borders
             ws1 = writer.sheets[month_year]
+            ws1.sheet_view.showGridLines = False
+
+            # Add logo to top-left corner of Sheet 1
+            if os.path.exists(LOGO_PATH):
+                try:
+                    logo_img = XLImage(LOGO_PATH)
+                    logo_img.width = 120
+                    logo_img.height = 60
+                    ws1.add_image(logo_img, "A1")
+                except Exception:
+                    pass
+
             for col_idx, col_name in enumerate(export_cols, start=1):
                 cell = ws1.cell(row=5, column=col_idx)
                 cell.fill = green_header
@@ -1332,11 +1375,6 @@ elif app_mode == "📊 Dashboard":
             chart1.title = "Overall Performance"
             chart1.y_axis.title = 'Performance %'
             chart1.x_axis.title = 'Metrics'
-            # Format axis titles with bold font and size
-            from openpyxl.chart.text import RichText
-            from openpyxl.drawing.text import Paragraph, CellAnchor, ParagraphProperties, CharacterProperties
-            chart1.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
-            chart1.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
             chart1.x_axis.tickLblPos = "low"
             chart1.x_axis.delete = False
             data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
@@ -1376,9 +1414,6 @@ elif app_mode == "📊 Dashboard":
             chart2.title = "Introduction & Conclusion"
             chart2.y_axis.title = 'Performance %'
             chart2.x_axis.title = 'Metrics'
-            # Format axis titles
-            chart2.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
-            chart2.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
             chart2.x_axis.tickLblPos = "low"
             chart2.x_axis.delete = False
             data2 = Reference(ws_charts, min_col=2, min_row=chart2_row, max_row=chart2_row + len(intro_conclusion))
@@ -1417,9 +1452,6 @@ elif app_mode == "📊 Dashboard":
             chart3.title = "Problem Solving"
             chart3.y_axis.title = 'Performance %'
             chart3.x_axis.title = 'Metrics'
-            # Format axis titles
-            chart3.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
-            chart3.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
             chart3.x_axis.tickLblPos = "low"
             chart3.x_axis.delete = False
             data3 = Reference(ws_charts, min_col=2, min_row=chart3_row, max_row=chart3_row + len(problem_solving))
@@ -1458,9 +1490,6 @@ elif app_mode == "📊 Dashboard":
             chart4.title = "Soft Skills"
             chart4.y_axis.title = 'Performance %'
             chart4.x_axis.title = 'Metrics'
-            # Format axis titles
-            chart4.y_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
-            chart4.x_axis.title.text.properties.pPr = [ParagraphProperties(latinFont='Calibri', sz=1100, b=True)]
             chart4.x_axis.tickLblPos = "low"
             chart4.x_axis.delete = False
             data4 = Reference(ws_charts, min_col=2, min_row=chart4_row, max_row=chart4_row + len(soft_skills))

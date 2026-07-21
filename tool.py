@@ -9,6 +9,11 @@ import plotly.express as px
 # --- User Authentication and RBAC ---
 import streamlit_authenticator as stauth
 
+SHARED_COOKIE_NAME = "qa_audit_platform_session"
+SHARED_COOKIE_KEY = "qa_audit_platform_cookie_key_2026_secure"
+
+st.set_page_config(page_title="QA Audio Call Selector", layout="wide")
+
 # Define credentials dictionary for streamlit-authenticator >=0.4.2
 credentials = {
     "usernames": {
@@ -31,8 +36,8 @@ cookie_manager = CookieManager(key="qa_app_tool_cookie_manager")
 
 authenticator = stauth.Authenticate(
     credentials=credentials,
-    cookie_name="qa_app_tool",
-    key="qa_app_tool_auth",
+    cookie_name=SHARED_COOKIE_NAME,
+    key=SHARED_COOKIE_KEY,
     expiry_days=1,
     cookie_manager=cookie_manager
 )
@@ -81,9 +86,246 @@ else:
         st.warning("Enter login details")
     st.stop()
 
-st.image("logos\\logo.png", width=180)
+# Login widget
+authenticator.login(location='main')
 
-st.set_page_config(page_title="QA Audio Call Selector", layout="wide")
+# Get values from session state
+name = st.session_state.get("name")
+authentication_status = st.session_state.get("authentication_status")
+username = st.session_state.get("username")
+
+def get_user_role(username):
+    # Example static mapping; replace with DB lookup as needed
+    role_map = {
+        "amanda.bio-marfo@nationwidemh.com": "admin",
+        "suraiyatu.mohammed@nationwidemh.com": "auditor",
+        "edem.dzitrie@nationwidemh.com": "supervisor"
+    }
+    return role_map.get(username, None)
+
+def get_auditor_users():
+    """Return {username: display_name} for every account with the 'auditor' role."""
+    return {
+        u: info["name"]
+        for u, info in credentials["usernames"].items()
+        if get_user_role(u) == "auditor"
+    }
+
+def load_available_calls(folder_path, exclude_files=None):
+    """List audio files in folder_path, inferring the Agent from the filename."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return pd.DataFrame(columns=["File_Name", "Agent", "Contact"])
+
+    files = [f for f in os.listdir(folder_path) if f.lower().endswith((".mp3", ".wav", ".m4a"))]
+    if exclude_files:
+        files = [f for f in files if f not in exclude_files]
+
+    df = pd.DataFrame({"File_Name": files})
+    if df.empty:
+        df["Agent"] = []
+        df["Contact"] = []
+        return df
+
+    base = df["File_Name"].str.rsplit(".", n=1).str[0]
+    df["Agent"] = base.str.split("_").str[0].str.strip("[]").fillna("Unknown").replace("", "Unknown")
+    df["Contact"] = df["File_Name"].apply(lambda f: os.path.join(folder_path, f))
+    return df[["File_Name", "Agent", "Contact"]]
+
+def load_existing_assignments():
+    """Load the full assignment history from ASSIGNMENTS_FILE, if it exists."""
+    columns = ["Auditor", "Auditor_Email", "File_Name", "Agent", "Contact",
+               "Assigned_By", "Assigned_By_Email", "Assigned_At", "Status"]
+    if os.path.exists(ASSIGNMENTS_FILE):
+        try:
+            return pd.read_excel(ASSIGNMENTS_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame(columns=columns)
+
+def save_assignments(new_rows_df):
+    """Append new_rows_df to the persisted assignment history and save."""
+    os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
+    combined = pd.concat([load_existing_assignments(), new_rows_df], ignore_index=True)
+    combined.to_excel(ASSIGNMENTS_FILE, index=False)
+    return combined
+
+def show_admin_panel():
+    st.info("Admin Panel: You have full access.")
+
+def show_approval_dashboard(supervisor_name, supervisor_username):
+    st.header("🗂️ Supervisor Dashboard — Call Assignment")
+
+    auditors = get_auditor_users()
+    if not auditors:
+        st.warning("No auditor accounts are configured.")
+        return
+
+    st.subheader("1️⃣ Select Auditors")
+    num_auditors = st.number_input(
+        "How many auditors will participate in this round?",
+        min_value=1, max_value=len(auditors), value=min(3, len(auditors)),
+        key="num_auditors_input"
+    )
+
+    selected_auditor_usernames = st.multiselect(
+        "Select which auditors will participate:",
+        options=list(auditors.keys()),
+        format_func=lambda u: auditors[u],
+        max_selections=int(num_auditors),
+        key="selected_auditors_input"
+    )
+
+    if len(selected_auditor_usernames) < num_auditors:
+        st.info(f"Please select {int(num_auditors)} auditor(s). Currently selected: {len(selected_auditor_usernames)}.")
+
+    st.subheader("2️⃣ Calls per Auditor")
+    calls_per_auditor = {}
+    if selected_auditor_usernames:
+        cols = st.columns(min(len(selected_auditor_usernames), 4))
+        for idx, u in enumerate(selected_auditor_usernames):
+            with cols[idx % len(cols)]:
+                calls_per_auditor[u] = st.number_input(
+                    f"Calls for {auditors[u]}",
+                    min_value=0, value=5, step=1, key=f"calls_count_{u}"
+                )
+
+    st.subheader("3️⃣ Call Source")
+    calls_folder = st.text_input(
+        "📁 Folder containing calls to assign:",
+        value=DEFAULT_CALLS_FOLDER, key="assign_calls_folder"
+    )
+    allow_reassign = st.checkbox(
+        "Allow reassigning calls that were already assigned previously",
+        value=False, key="allow_reassign_checkbox"
+    )
+
+    if st.button("🚀 Assign Calls", type="primary"):
+        if len(selected_auditor_usernames) != num_auditors:
+            st.error(f"Select exactly {int(num_auditors)} auditor(s) before assigning.")
+            st.stop()
+
+        total_requested = sum(calls_per_auditor.values())
+        if total_requested == 0:
+            st.error("Specify at least one call for at least one auditor.")
+            st.stop()
+
+        existing_assignments = load_existing_assignments()
+        previously_assigned_files = (
+            set(existing_assignments["File_Name"])
+            if not allow_reassign and "File_Name" in existing_assignments.columns
+            else set()
+        )
+
+        available = load_available_calls(calls_folder, exclude_files=previously_assigned_files)
+        if available.empty:
+            st.error("No available (unassigned) calls found in the specified folder.")
+            st.stop()
+
+        if total_requested > len(available):
+            st.warning(
+                f"Only {len(available)} unassigned call(s) available, but {total_requested} were "
+                "requested. Calls will be distributed as evenly as possible."
+            )
+
+        pool = available.sample(frac=1).reset_index(drop=True)
+        assigned_rows = []
+        cursor = 0
+        for u, count in calls_per_auditor.items():
+            take = max(min(int(count), len(pool) - cursor), 0)
+            chunk = pool.iloc[cursor: cursor + take]
+            cursor += take
+            for _, row in chunk.iterrows():
+                assigned_rows.append({
+                    "Auditor": auditors[u],
+                    "Auditor_Email": u,
+                    "File_Name": row["File_Name"],
+                    "Agent": row["Agent"],
+                    "Contact": row["Contact"],
+                    "Assigned_By": supervisor_name,
+                    "Assigned_By_Email": supervisor_username,
+                    "Assigned_At": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "Status": "Assigned"
+                })
+
+        if not assigned_rows:
+            st.error("No calls could be assigned — check the call source folder and previously assigned calls.")
+            st.stop()
+
+        new_assignments_df = pd.DataFrame(assigned_rows)
+        save_assignments(new_assignments_df)
+        st.session_state["latest_assignments"] = new_assignments_df
+        st.success(
+            f"✅ Assigned {len(new_assignments_df)} call(s) across {len(calls_per_auditor)} "
+            f"auditor(s). Saved to {ASSIGNMENTS_FILE}"
+        )
+
+    if "latest_assignments" in st.session_state:
+        st.subheader("📋 Latest Assignment Batch")
+        st.dataframe(st.session_state["latest_assignments"], use_container_width=True, hide_index=True)
+
+        excel_buffer = io.BytesIO()
+        st.session_state["latest_assignments"].to_excel(excel_buffer, index=False)
+        excel_buffer.seek(0)
+        st.download_button(
+            "⬇️ Download This Batch (Excel)",
+            data=excel_buffer,
+            file_name=f"call_assignments_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            key="download_latest_assignments"
+        )
+
+    st.subheader("📚 All Assignments on Record")
+    all_assignments = load_existing_assignments()
+    if not all_assignments.empty:
+        st.dataframe(all_assignments, use_container_width=True, hide_index=True)
+    else:
+        st.info("No assignments recorded yet.")
+
+def show_audit_form():
+    st.info("Auditor Form: You have full access.")
+
+if authentication_status == False:
+    st.error("Invalid credentials")
+    st.stop()
+elif authentication_status is None:
+    st.warning("Please enter your username and password")
+    st.stop()
+
+# If we reach here, user is authenticated
+st.success(f"Welcome {name}")
+user_role = get_user_role(username)
+if user_role == "admin":
+    show_admin_panel()
+elif user_role == "supervisor":
+    show_approval_dashboard(name, username)
+elif user_role == "auditor":
+    show_audit_form()
+
+# Load and combine all audit log files into audit_data
+audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
+if not audit_files:
+    st.error("No audit log files found. Please ensure audit_log_*.xlsx files are present.")
+    st.stop()
+dfs = []
+for file in audit_files:
+    try:
+        df = pd.read_excel(file)
+        dfs.append(df)
+    except Exception as e:
+        st.warning(f"Could not read {file}: {e}")
+if not dfs:
+    st.error("No valid audit log data loaded.")
+    st.stop()
+audit_data = pd.concat(dfs, ignore_index=True)
+
+base_dir = os.path.dirname(os.path.abspath(__file__))
+logo_path = os.path.join(base_dir, "Logos", "logo.png")
+if os.path.exists(logo_path):
+    try:
+        with open(logo_path, "rb") as logo_file:
+            st.image(logo_file.read(), width=180)
+    except OSError:
+        pass
 st.title("🎧 QA Audio Call Selector")
 
 # Initialize session state for uploaded files
