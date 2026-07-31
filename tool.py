@@ -68,6 +68,18 @@ def show_approval_dashboard():
 def show_audit_form():
     st.info("Auditor Form: You have full access.")
 
+def auditor_has_assigned_calls(auditor_email):
+    assignments = load_existing_assignments()
+    if assignments.empty or "Auditor_Email" not in assignments.columns:
+        return False
+    auditor_email = str(auditor_email).strip().lower()
+    return assignments["Auditor_Email"].astype(str).str.strip().str.lower().eq(auditor_email).any()
+
+def _post_logout_cleanup(_event=None):
+    # Remove local cached UI/form state after authenticator clears auth session.
+    for key in ["latest_assignments", "selected", "uploaded_files_folder"]:
+        st.session_state.pop(key, None)
+
 if authentication_status:
     st.success(f"Welcome {name}")
     user_role = get_user_role(username)
@@ -294,11 +306,21 @@ elif authentication_status is None:
 # If we reach here, user is authenticated
 st.success(f"Welcome {name}")
 user_role = get_user_role(username)
+st.sidebar.markdown(f"**Role:** {user_role}")
+authenticator.logout(
+    button_name="🚪 Logout",
+    location="sidebar",
+    key="tool_sidebar_logout_button",
+    callback=_post_logout_cleanup
+)
 if user_role == "admin":
     show_admin_panel()
 elif user_role == "supervisor":
     show_approval_dashboard(name, username)
 elif user_role == "auditor":
+    if not auditor_has_assigned_calls(username):
+        st.warning("You will get access to this page once a supervisor assigns calls to your account.")
+        st.stop()
     show_audit_form()
 
 # Load and combine all audit log files into audit_data

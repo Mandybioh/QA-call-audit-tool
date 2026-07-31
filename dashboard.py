@@ -263,6 +263,11 @@ def show_approval_dashboard(supervisor_name, supervisor_username):
 def show_audit_form():
     st.info("Auditor Form: You have full access.")
 
+def _post_logout_cleanup(_event=None):
+    # Remove local cached UI state after authenticator clears auth session.
+    for key in ["latest_assignments"]:
+        st.session_state.pop(key, None)
+
 if authentication_status == False:
     st.error("Invalid credentials")
     st.stop()
@@ -273,6 +278,18 @@ elif authentication_status is None:
 # If we reach here, user is authenticated
 st.success(f"Welcome {name}")
 user_role = get_user_role(username)
+st.sidebar.markdown(f"**Role:** {user_role}")
+authenticator.logout(
+    button_name="🚪 Logout",
+    location="sidebar",
+    key="dashboard_sidebar_logout_button",
+    callback=_post_logout_cleanup
+)
+
+if user_role not in ("admin", "supervisor"):
+    st.error("Access denied. Only admin and supervisor accounts are allowed on this page.")
+    st.stop()
+
 if user_role == "admin":
     show_admin_panel()
 elif user_role == "supervisor":
@@ -452,7 +469,57 @@ with tab1:
         ))
         st.plotly_chart(fig_gauge, use_container_width=True)
 
-    # ...removed Quality Metrics Trend (Grouped) table from Overview tab...
+    # Quality metrics performance (Yes-rate) with percentages shown in left labels
+    quality_metric_map = [
+        ("Call opening", "Did CCO open the call using the appropriate greetings?"),
+        ("Call closure", "Did the CCO end the call politely and professionally?"),
+        ("Identification of customer needs", "Was the CCO able to identify and verify the needs of the customer?"),
+        ("Educate & Inform", "Was the CCO able to educate & inform the customer about the query/enquiry/request"),
+        ("Necessary steps to query resolution", "Did the CCO ensure and confirm the necessary steps to query resolution?"),
+        ("Initiative", "Did the CCO accept responsibility for the query? (CAN DO)"),
+        ("Identifying further needs", "Did the CCO ask if you had any further needs?"),
+        ("Effective communication", "Did the CCO speak clearly and fluently throughout the call?"),
+        ("Professionalism", "Was the CCO professional?"),
+        ("Effective listening & troubleshooting", "Was the CCO able to communicate effectively through effective listening and troubleshooting?"),
+        ("Politeness & courtesy", "Was the CCO polite & courteous?"),
+        ("Empathy", "Did the CCO show empathy? (introduce solution statement)")
+    ]
+
+    metric_rows = []
+    total_calls = len(filtered_data)
+    for short_name, full_name in quality_metric_map:
+        if total_calls > 0 and full_name in filtered_data.columns:
+            yes_rate = (filtered_data[full_name].astype(str).str.strip().str.lower() == 'yes').mean() * 100
+        else:
+            yes_rate = 0.0
+        metric_rows.append({
+            "Metric": short_name,
+            "Score": yes_rate,
+            "Metric Label": f"{yes_rate:.1f}%  |  {short_name}"
+        })
+
+    metrics_df = pd.DataFrame(metric_rows).sort_values("Score", ascending=True)
+    fig_metrics = px.bar(
+        metrics_df,
+        x='Score',
+        y='Metric Label',
+        orientation='h',
+        title='Quality Metrics Score (%)',
+        labels={'Score': 'Score (%)', 'Metric Label': 'Metrics'},
+        color='Score',
+        color_continuous_scale='RdYlGn',
+        range_color=[0, 100]
+    )
+    fig_metrics.update_layout(
+        font=dict(family="Arial, sans-serif", size=14),
+        title_font=dict(family="Arial, sans-serif", size=18, color="#222"),
+        xaxis_title_font=dict(family="Arial, sans-serif", size=16),
+        yaxis_title_font=dict(family="Arial, sans-serif", size=16),
+        coloraxis_showscale=False,
+        margin=dict(l=10, r=10, t=50, b=10)
+    )
+    fig_metrics.update_xaxes(range=[0, 100], ticksuffix='%')
+    st.plotly_chart(fig_metrics, use_container_width=True)
 
 # Tab 2: Agent Performance
 with tab2:

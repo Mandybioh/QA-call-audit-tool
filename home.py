@@ -30,6 +30,10 @@ credentials = {
     "usernames": {
         "amanda.bio-marfo@nationwidemh.com": {
             "name": "Amanda Bio-Marfo",
+            "password": stauth.Hasher.hash("012")
+        },
+        "araba.quartey@nationwidemh.com": {
+            "name": "Araba Quartey",
             "password": stauth.Hasher.hash("123")
         },
         "suraiyatu.mohammed@nationwidemh.com": {
@@ -65,6 +69,7 @@ def get_user_role(username):
     # Example static mapping; replace with DB lookup as needed
     role_map = {
         "amanda.bio-marfo@nationwidemh.com": "admin",
+        "araba.quartey@nationwidemh.com": "auditor",
         "suraiyatu.mohammed@nationwidemh.com": "auditor",
         "edem.dzitrie@nationwidemh.com": "supervisor"
     }
@@ -116,6 +121,14 @@ def save_assignments(new_rows_df):
     combined.to_excel(ASSIGNMENTS_FILE, index=False)
     return combined
 
+def auditor_has_assigned_calls(auditor_email):
+    """Return True if the given auditor has at least one assigned call record."""
+    assignments = load_existing_assignments()
+    if assignments.empty or "Auditor_Email" not in assignments.columns:
+        return False
+    auditor_email = str(auditor_email).strip().lower()
+    return assignments["Auditor_Email"].astype(str).str.strip().str.lower().eq(auditor_email).any()
+
 if authentication_status == False:
     st.error("Invalid credentials")
     st.stop()
@@ -145,25 +158,46 @@ if os.path.exists(LOGO_PATH):
     except OSError:
         pass
 
+# User role
+user_role = get_user_role(username)
+auditor_can_access_tool = user_role != "auditor" or auditor_has_assigned_calls(username)
+
 # Navigation menu
 st.sidebar.title("📋 Navigation")
+
+allowed_views = ["🏠 Home", "🛠️ Tool", "📊 Dashboard"]
+
+if st.session_state.app_mode not in allowed_views:
+    st.session_state.app_mode = allowed_views[0]
+    st.session_state.app_mode_selector = allowed_views[0]
+
 selected_mode = st.sidebar.radio(
     "Select View:",
-    ["🏠 Home", "🛠️ Tool", "📊 Dashboard"],
+    allowed_views,
     key="app_mode_selector"
 )
 if selected_mode != st.session_state.app_mode:
     st.session_state.app_mode = selected_mode
 app_mode = st.session_state.app_mode
 
-# User role
-user_role = get_user_role(username)
 st.sidebar.markdown(f"**Role:** {user_role}")
 
-# Logout button
-if st.sidebar.button("🚪 Logout"):
-    st.session_state.authentication_status = False
-    st.rerun()
+def _post_logout_cleanup(_event=None):
+    # Remove local view/form state after auth cookie/session is cleared by authenticator.
+    keys_to_remove = [
+        "app_mode", "app_mode_selector", "_sync_app_mode_selector",
+        "latest_assignments", "selected", "uploaded_files_folder"
+    ]
+    for key in keys_to_remove:
+        st.session_state.pop(key, None)
+
+# Logout button (handled by streamlit-authenticator)
+authenticator.logout(
+    button_name="🚪 Logout",
+    location="sidebar",
+    key="sidebar_logout_button",
+    callback=_post_logout_cleanup
+)
 
 # ============================================
 # HOME PAGE
@@ -232,6 +266,10 @@ if app_mode == "🏠 Home":
 # ============================================
 elif app_mode == "🛠️ Tool":
     st.title("🛠️ QA Audio Call Selector")
+
+    if user_role == "auditor" and not auditor_can_access_tool:
+        st.warning("You will get access to this page once a supervisor assigns calls to your account.")
+        st.stop()
 
     if user_role == "supervisor":
         st.header("🗂️ Supervisor Dashboard — Call Assignment")
@@ -947,6 +985,58 @@ elif app_mode == "📊 Dashboard":
                 }
             ))
             st.plotly_chart(fig_gauge, use_container_width=True)
+
+        # Quality metrics performance (Yes-rate) with percentages shown in left labels
+        quality_metric_map = [
+            ("Call opening", "Did CCO open the call using the appropriate greetings?"),
+            ("Call closure", "Did the CCO end the call politely and professionally?"),
+            ("Identification of customer needs", "Was the CCO able to identify and verify the needs of the customer?"),
+            ("Educate & Inform", "Was the CCO able to educate & inform the customer about the query/enquiry/request"),
+            ("Necessary steps to query resolution", "Did the CCO ensure and confirm the necessary steps to query resolution?"),
+            ("Initiative", "Did the CCO accept responsibility for the query? (CAN DO)"),
+            ("Identifying further needs", "Did the CCO ask if you had any further needs?"),
+            ("Effective communication", "Did the CCO speak clearly and fluently throughout the call?"),
+            ("Professionalism", "Was the CCO professional?"),
+            ("Effective listening & troubleshooting", "Was the CCO able to communicate effectively through effective listening and troubleshooting?"),
+            ("Politeness & courtesy", "Was the CCO polite & courteous?"),
+            ("Empathy", "Did the CCO show empathy? (introduce solution statement)")
+        ]
+
+        metric_rows = []
+        total_calls = len(filtered_data)
+        for short_name, full_name in quality_metric_map:
+            if total_calls > 0 and full_name in filtered_data.columns:
+                yes_rate = (filtered_data[full_name].astype(str).str.strip().str.lower() == 'yes').mean() * 100
+            else:
+                yes_rate = 0.0
+            metric_rows.append({
+                "Metric": short_name,
+                "Score": yes_rate,
+                "Metric Label": f"{yes_rate:.1f}%  |  {short_name}"
+            })
+
+        metrics_df = pd.DataFrame(metric_rows).sort_values("Score", ascending=True)
+        fig_metrics = px.bar(
+            metrics_df,
+            x='Score',
+            y='Metric Label',
+            orientation='h',
+            title='Quality Metrics Score (%)',
+            labels={'Score': 'Score (%)', 'Metric Label': 'Metrics'},
+            color='Score',
+            color_continuous_scale='RdYlGn',
+            range_color=[0, 100]
+        )
+        fig_metrics.update_layout(
+            font=dict(family="Arial, sans-serif", size=14),
+            title_font=dict(family="Arial, sans-serif", size=18, color="#222"),
+            xaxis_title_font=dict(family="Arial, sans-serif", size=16),
+            yaxis_title_font=dict(family="Arial, sans-serif", size=16),
+            coloraxis_showscale=False,
+            margin=dict(l=10, r=10, t=50, b=10)
+        )
+        fig_metrics.update_xaxes(range=[0, 100], ticksuffix='%')
+        st.plotly_chart(fig_metrics, use_container_width=True)
     
     with tab2:
         agent_stats = filtered_data.groupby('Name of Call Centre Officer').agg({
@@ -1556,8 +1646,36 @@ elif app_mode == "📊 Dashboard":
             
             # ===== SHEET 5: Charts & Summary =====
             from openpyxl.chart import BarChart, LineChart, Reference, PieChart
+            from openpyxl.chart.title import Title
+            from openpyxl.chart.text import RichText, Text
+            from openpyxl.drawing.text import Paragraph, ParagraphProperties, CharacterProperties, RegularTextRun
             ws_charts = writer.book.create_sheet('Charts & Summary')
-            
+
+            CHART1_COLOR = "70AD47"  # green - Overall Performance
+            CHART2_COLOR = "FFC000"  # yellow - Introduction & Conclusion
+            CHART3_COLOR = "5B9BD5"  # blue - Problem Solving
+            CHART4_COLOR = "ED7D31"  # orange - Soft Skills
+            chart_month_year = current_date.strftime('%B %Y')
+
+            def _chart_title(text):
+                """Bold, underlined chart title matching the report template."""
+                title_props = CharacterProperties(b=True, u="sng", sz=1400)
+                run = RegularTextRun(rPr=title_props, t=text)
+                para = Paragraph(pPr=ParagraphProperties(defRPr=title_props), r=[run])
+                return Title(tx=Text(rich=RichText(p=[para])))
+
+            def _style_bar_chart(chart):
+                """Percent scale on the left (Metrics) axis, no gridlines, no per-bar labels/legend."""
+                chart.y_axis.title = 'Metrics'
+                chart.y_axis.numFmt = '0%'
+                chart.y_axis.scaling.min = 0
+                chart.y_axis.scaling.max = 1
+                chart.y_axis.majorUnit = 0.1
+                chart.y_axis.majorGridlines = None
+                chart.x_axis.tickLblPos = "low"
+                chart.x_axis.delete = False
+                chart.legend = None
+
             # Organize metrics by category
             intro_conclusion = [
                 ('Call opening', metric_performance[0][1]),
@@ -1599,26 +1717,16 @@ elif app_mode == "📊 Dashboard":
             
             # Create Overall Performance chart
             chart1 = BarChart()
-            chart1.type = "bar"
-            chart1.title = "Overall Performance"
-            chart1.x_axis.title = 'Metrics'
-            chart1.y_axis.title = 'Performance %'
-            chart1.x_axis.tickLblPos = "low"
-            chart1.x_axis.delete = False
-            chart1.x_axis.scaling.orientation = "maxMin"
-            chart1.y_axis.numFmt = '0%'
+            chart1.type = "col"
+            chart1.title = _chart_title(f"Overall Performance - {chart_month_year}")
             data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
             cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
             chart1.add_data(data1, titles_from_data=True)
             chart1.set_categories(cats1)
             chart1.height = 11
-            chart1.width = 20
-            chart1.series[0].graphicalProperties.solidFill = "006400"
-            # Add data labels with percentages
-            from openpyxl.chart.label import DataLabelList
-            chart1.dataLabels = DataLabelList()
-            chart1.dataLabels.showVal = True
-            chart1.dataLabels.numFmt = '0.0%'
+            chart1.width = 42
+            chart1.series[0].graphicalProperties.solidFill = CHART1_COLOR
+            _style_bar_chart(chart1)
             ws_charts.add_chart(chart1, "D2")
             
             # ===== Chart 2: Introduction and Conclusion =====
@@ -1641,26 +1749,17 @@ elif app_mode == "📊 Dashboard":
             
             # Create Introduction & Conclusion chart
             chart2 = BarChart()
-            chart2.type = "bar"
-            chart2.title = "Introduction & Conclusion"
-            chart2.x_axis.title = 'Metrics'
-            chart2.y_axis.title = 'Performance %'
-            chart2.x_axis.tickLblPos = "low"
-            chart2.x_axis.delete = False
-            chart2.x_axis.scaling.orientation = "maxMin"
-            chart2.y_axis.numFmt = '0%'
+            chart2.type = "col"
+            chart2.title = _chart_title(f"Introduction & Conclusion - {chart_month_year}")
             data2 = Reference(ws_charts, min_col=2, min_row=chart2_row, max_row=chart2_row + len(intro_conclusion))
             cats2 = Reference(ws_charts, min_col=1, min_row=chart2_row + 1, max_row=chart2_row + len(intro_conclusion))
             chart2.add_data(data2, titles_from_data=True)
             chart2.set_categories(cats2)
-            chart2.height = 5
-            chart2.width = 20
-            chart2.series[0].graphicalProperties.solidFill = "00B0F0"
-            # Add data labels with percentages
-            chart2.dataLabels = DataLabelList()
-            chart2.dataLabels.showVal = True
-            chart2.dataLabels.numFmt = '0.0%'
-            ws_charts.add_chart(chart2, "D28")
+            chart2.height = 11
+            chart2.width = 18
+            chart2.series[0].graphicalProperties.solidFill = CHART2_COLOR
+            _style_bar_chart(chart2)
+            ws_charts.add_chart(chart2, "D26")
             
             # ===== Chart 3: Problem Solving =====
             chart3_row = chart2_row + len(intro_conclusion) + 3
@@ -1682,26 +1781,17 @@ elif app_mode == "📊 Dashboard":
             
             # Create Problem Solving chart
             chart3 = BarChart()
-            chart3.type = "bar"
-            chart3.title = "Problem Solving"
-            chart3.x_axis.title = 'Metrics'
-            chart3.y_axis.title = 'Performance %'
-            chart3.x_axis.tickLblPos = "low"
-            chart3.x_axis.delete = False
-            chart3.x_axis.scaling.orientation = "maxMin"
-            chart3.y_axis.numFmt = '0%'
+            chart3.type = "col"
+            chart3.title = _chart_title(f"Problem Solving - {chart_month_year}")
             data3 = Reference(ws_charts, min_col=2, min_row=chart3_row, max_row=chart3_row + len(problem_solving))
             cats3 = Reference(ws_charts, min_col=1, min_row=chart3_row + 1, max_row=chart3_row + len(problem_solving))
             chart3.add_data(data3, titles_from_data=True)
             chart3.set_categories(cats3)
-            chart3.height = 7
+            chart3.height = 11
             chart3.width = 20
-            chart3.series[0].graphicalProperties.solidFill = "A9D18E"
-            # Add data labels with percentages
-            chart3.dataLabels = DataLabelList()
-            chart3.dataLabels.showVal = True
-            chart3.dataLabels.numFmt = '0.0%'
-            ws_charts.add_chart(chart3, "D42")
+            chart3.series[0].graphicalProperties.solidFill = CHART3_COLOR
+            _style_bar_chart(chart3)
+            ws_charts.add_chart(chart3, "D50")
             
             # ===== Chart 4: Soft Skills =====
             chart4_row = chart3_row + len(problem_solving) + 3
@@ -1723,26 +1813,17 @@ elif app_mode == "📊 Dashboard":
             
             # Create Soft Skills chart
             chart4 = BarChart()
-            chart4.type = "bar"
-            chart4.title = "Soft Skills"
-            chart4.x_axis.title = 'Metrics'
-            chart4.y_axis.title = 'Performance %'
-            chart4.x_axis.tickLblPos = "low"
-            chart4.x_axis.delete = False
-            chart4.x_axis.scaling.orientation = "maxMin"
-            chart4.y_axis.numFmt = '0%'
+            chart4.type = "col"
+            chart4.title = _chart_title(f"Soft Skills - {chart_month_year}")
             data4 = Reference(ws_charts, min_col=2, min_row=chart4_row, max_row=chart4_row + len(soft_skills))
             cats4 = Reference(ws_charts, min_col=1, min_row=chart4_row + 1, max_row=chart4_row + len(soft_skills))
             chart4.add_data(data4, titles_from_data=True)
             chart4.set_categories(cats4)
-            chart4.height = 7
+            chart4.height = 11
             chart4.width = 20
-            chart4.series[0].graphicalProperties.solidFill = "FFC000"
-            # Add data labels with percentages
-            chart4.dataLabels = DataLabelList()
-            chart4.dataLabels.showVal = True
-            chart4.dataLabels.numFmt = '0.0%'
-            ws_charts.add_chart(chart4, "D60")
+            chart4.series[0].graphicalProperties.solidFill = CHART4_COLOR
+            _style_bar_chart(chart4)
+            ws_charts.add_chart(chart4, "D74")
             
             # Set column widths
             ws_charts.column_dimensions['A'].width = 40
