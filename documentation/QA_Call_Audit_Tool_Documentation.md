@@ -2,71 +2,132 @@
 
 ## Executive Summary
 
-This project delivers a robust solution for auditing call center interactions, enabling quality assurance teams to efficiently select, review, and analyze call recordings. The system consists of two main components:
-- **QA Audio Call Selector (tool.py):** For uploading/selecting call recordings, performing audits, and saving results.
-- **QA Audit Dashboard (dashboard.py):** For visualizing, analyzing, and exporting audit results.
+This project delivers a role-based solution for auditing call center interactions, enabling quality assurance teams to assign work, select and review call recordings, score audits against a benchmark, and analyze results.
+
+The platform has been consolidated into a **single Streamlit application, `home.py`**, which is the one app to run day-to-day. It combines everything that used to be split across two separate scripts:
+- **QA Audio Call Selector** (formerly `tool.py`) — supervisor call assignment, auditor call selection, and the audit form.
+- **QA Audit Dashboard** (formerly `dashboard.py`) — visualizing, analyzing, and exporting audit results.
+
+`tool.py` and `dashboard.py` are kept in the repository as standalone legacy references/backups, but are no longer required for normal use — `home.py` supersedes both.
+
+---
+
+## Login & Role-Based Access (RBAC)
+
+`home.py` requires login (via `streamlit-authenticator`) before any content is shown. Each account maps to one of three roles, defined in a static `role_map` in code:
+
+| Role | Sees in Tool mode | Sees in Dashboard mode |
+|---|---|---|
+| **admin** | Full audio call selector (folder/upload + sampling) | Full dashboard, all 6 tabs |
+| **supervisor** | "Supervisor Dashboard — Call Assignment" panel, plus the full call selector | Full dashboard, all 6 tabs |
+| **auditor** | Only their own assigned, unfinished calls (see below) | Full dashboard, all 6 tabs |
+
+A session cookie (`streamlit-authenticator` + `extra-streamlit-components`) keeps the user logged in across reruns for a limited number of days.
 
 ---
 
 ## Key Features & Workflow
 
-### 1. Call Selection & Audit (tool.py)
-- **Flexible Input:** Users can select call recordings from a folder or upload files directly.
-- **Metadata Extraction:** Automatically extracts agent names and call dates from filenames.
-- **Sampling:** Supports pure random and stratified sampling by agent for unbiased audits.
-- **Audit Form:** Presents a structured form with benchmark-aligned questions and scoring.
-- **Session State:** Remembers user input for seamless experience.
-- **Audit Log:** Saves results in timestamped Excel files for traceability and integration.
+### 1. Home Mode
+- Landing page with quick links into Tool and Dashboard mode.
+- "Quick Stats" panel: total calls, average score, agent count, and days of data, computed from all saved audit logs.
 
-### 2. Data Visualization & Reporting (dashboard.py)
-- **Audit Log Loading:** Combines all audit logs for comprehensive analysis.
-- **Filtering:** Filters by call date, agent, and score range for targeted insights.
-- **Metrics:** Displays total calls, average score, agent count, and comments.
-- **Charts:** Visualizes score distribution, agent performance, and trends over time (using call dates).
-- **Export:** Generates a multi-sheet Excel report with styled headers for professional presentation.
+### 2. Tool Mode — Call Assignment & Audit
+
+**Supervisor Dashboard — Call Assignment** (supervisors only):
+- Select how many auditors participate and which ones.
+- Set the number of calls to allocate to each auditor.
+- Point at a source folder of recordings (defaults to `New call list/`) and assign calls — previously assigned calls are excluded unless "allow reassigning" is checked.
+- Assignments are appended to a persistent record at `Call_Assignments/call_assignments.xlsx` (columns include `Auditor`, `Auditor_Email`, `File_Name`, `Agent`, `Contact`, `Assigned_By`, `Assigned_At`, `Status`).
+- View the latest assignment batch (with an Excel download) and the full assignment history on record.
+
+**Auditor call restriction** (auditors only):
+- Auditors do **not** see the folder/upload picker — they cannot browse or pull arbitrary new calls.
+- Their working set is built entirely from `Call_Assignments/call_assignments.xlsx`, filtered to their own account.
+- "Unfinished" calls are determined by cross-referencing assigned `File_Name`s against every saved audit log in `Audit_log_calls/` — any assigned call that has already been audited (or marked N/A) drops off the list automatically.
+- All of an auditor's unfinished assigned calls load in one step ("📝 Load My Assigned Calls") — no random sampling, since the pool is already scoped to what's actually theirs to do.
+
+**Audio Call Selector & Audit Form** (all roles, using their respective call pool):
+- Input via folder path or direct file upload (non-auditors), or the auditor's assigned pool (auditors).
+- Automatic Agent/Date extraction from filenames (format: `AgentName_CallID_YYYY-MM-DD_...`).
+- Sampling: Pure Random or Stratified by Agent (non-auditors).
+- Structured audit form per call: caller metadata, benchmark-aligned quality questions with weighted scores, N/A handling, and free-text comments.
+- **Save Audit Log** writes a timestamped Excel file to `Audit_log_calls/audit_log_YYYY-MM-DD_HH-MM-SS.xlsx`, plus an in-app summary (average score, per-agent stats, bar chart).
+
+### 3. Dashboard Mode — Analytics & Reporting
+
+Loads and combines every file in `Audit_log_calls/`, then offers sidebar filters (date range, agent, score range) and four top-line metrics (total calls, average score, unique agents, comments provided).
+
+Six tabs:
+1. **📈 Overview** — score distribution histogram and an average-score gauge.
+2. **👥 Agent Performance** — average score and call count per agent, plus a summary table.
+3. **📅 Timeline** — average score and audit volume trended by call date.
+4. **📝 Comments** — browsable, score-filterable list of audit comments.
+5. **🗂️ Raw Data** — full filtered dataset, plus a rich multi-sheet Excel export:
+   - **Sheet 1 (month/year)** — full audit data with colored headers, alternating row shading, no gridlines, the company logo embedded in the top-left corner, and live formulas for Total Score / Fatal Flag / Score %.
+   - **Individual performance** — average QA score and call count per agent.
+   - **Trend** — quality-metric performance broken out by category (Introduction & Conclusion, Problem Solving, Soft Skills), plus fatal-call count.
+   - **Team performance** — the same categorized metrics laid out for team-wide comparison.
+   - **Charts & Summary** — bar charts for overall and per-category performance, color-coded by performance band.
+6. **🕒 Unfinished Calls** — supervisor-facing completion tracking:
+   - Cross-references `Call_Assignments/call_assignments.xlsx` against every completed audit log to compute what's still outstanding.
+   - Top-line metrics: total unfinished calls, total assigned calls, overall % unfinished.
+   - A per-auditor summary table (**Auditor Name | Unfinished Calls | Total Assigned Calls | % Unfinished**), sorted worst-first.
+   - A detail table of every individual unfinished call.
+   - Persists a snapshot (auditor name included) to `unfinished calls/unfinished_calls.xlsx` on every view.
 
 ---
 
-## Detailed Code Explanation
+## Data & Folder Layout
 
-### tool.py — QA Audio Call Selector
-
-- **Imports:** Loads Streamlit, pandas, OS utilities, datetime, regex, and Plotly for UI, data, and charts.
-- **Session State:** Initializes variables to store uploaded files and user input.
-- **Input Method:** Lets users choose between folder selection and file upload.
-- **File Handling:** Saves uploaded files to a temporary directory and lists audio files for review.
-- **Data Preparation:** Extracts agent and date info from filenames, prepares DataFrame with all audit fields.
-- **Sampling:** Selects calls for audit using random or stratified methods.
-- **Audit Form:** Displays audio playback, metadata, and audit questions (with scores) for each call.
-- **Scoring:** Calculates total score per call based on benchmark weights.
-- **Saving:** Exports audit results to Excel, displays summary and statistics.
-
-### dashboard.py — QA Audit Dashboard
-
-- **Imports:** Loads Streamlit, pandas, Plotly, openpyxl, and other utilities for UI, data, charts, and Excel export.
-- **Audit Log Loading:** Reads all audit logs and combines them for analysis.
-- **Filtering:** Sidebar filters for date range (using call date), agent, and score range.
-- **Metrics:** Shows key statistics (calls, scores, agents, comments).
-- **Tabs:** Provides views for Overview, Agent Performance, Timeline, Comments, and Raw Data.
-- **Charts:** Uses dark green color for all main charts for visual consistency.
-- **Excel Export:** Creates a multi-sheet report with styled headers (white background, dark green font).
+| Folder | Contents |
+|---|---|
+| `Audit_log_calls/` | One timestamped `.xlsx` per saved audit batch — the source of truth for all Dashboard analytics. |
+| `Call_Assignments/` | `call_assignments.xlsx` — the full history of supervisor → auditor call assignments. |
+| `unfinished calls/` | `unfinished_calls.xlsx` — latest snapshot of outstanding (unaudited) assigned calls, refreshed each time the Unfinished Calls tab is viewed. |
+| `New call list/` | Default source folder supervisors assign new calls from. |
+| `Logos/` | `logo.png` (and `logo_white.png`) used in the sidebar, the Home page, and embedded in the Sheet 1 Excel export. |
 
 ---
 
 ## Benchmark Alignment
 
-- **Audit Questions:** All questions and scores match the provided benchmark, ensuring consistent and fair evaluation.
-- **Scoring Logic:** Each question contributes its benchmark weight to the total score.
-- **Dashboard Analysis:** All analytics and exports reflect the benchmark scoring.
+- **Audit Questions:** All questions and their point weights match the provided benchmark, ensuring consistent, fair evaluation across auditors.
+- **Scoring Logic:** Each "Yes" answer contributes its benchmark weight to the call's Total Score (out of 100); N/A and Fatal responses are handled explicitly, including in the live Excel formulas.
+- **Dashboard Analysis:** All analytics, tabs, and exports reflect this same benchmark scoring — there is one scoring system shared across audit entry and reporting.
 
 ---
 
 ## Impact & Value
 
-- **Efficiency:** Automates sampling, scoring, and reporting, saving time for QA teams.
+- **Single point of entry:** One login, one app (`home.py`), for supervisors, auditors, and admins — no more juggling separate scripts.
+- **Accountability:** Auditors can only work their own assigned calls, and supervisors can see exactly what's outstanding and by whom, in real time.
+- **Efficiency:** Automates assignment, sampling, scoring, and reporting, saving time for QA teams.
 - **Accuracy:** Ensures audits are scored according to the benchmark, with clear documentation and traceability.
 - **Actionable Insights:** Enables data-driven decisions for training, process improvement, and quality assurance.
-- **Professional Presentation:** Visual and export enhancements make the tool suitable for both internal and external reporting.
+- **Professional Presentation:** The multi-sheet Excel export (formulas, colors, logo, charts) is suitable for both internal and external reporting.
+
+---
+
+## How to Run
+
+**Recommended — single app:**
+```powershell
+streamlit run home.py
+```
+or double-click `run_selector.bat` (already points at `home.py`).
+
+**Legacy (kept for reference only):**
+```powershell
+streamlit run dashboard.py   # or run_dashboard.bat
+streamlit run tool.py
+```
+
+**Install dependencies:**
+```powershell
+pip install -r requirements.txt
+```
+or double-click `install_dependencies.bat`.
 
 ---
 
@@ -80,110 +141,17 @@ This project delivers a robust solution for auditing call center interactions, e
 ---
 
 ## Appendix: File Locations
-- **Source Code:**
-  - tool.py
-  - dashboard.py
+
+- **Primary app (run this):**
+  - `home.py`
+- **Legacy standalone apps (reference only):**
+  - `tool.py` — original QA Audio Call Selector
+  - `dashboard.py` — original QA Audit Dashboard
 - **Documentation:**
-  - QA_Call_Audit_Tool_Documentation.md (this file)
-  - DOCUMENTATION.md (detailed technical reference)
+  - `QA_Call_Audit_Tool_Documentation.md` (this file)
+  - `DOCUMENTATION.md` (detailed technical reference — pending refresh)
+  - `README.md` (quick-start guide — pending refresh)
 
 ---
 
-**For further details, see the DOCUMENTATION.md file for line-by-line explanations.**
-
-
-
-
-Project Overview
-This project consists of two main components:
-* tool.py: The QA Audio Call Selector, used for uploading/selecting call recordings, auditing calls, and saving audit results.
-* dashboard.py: The QA Audit Dashboard, used for visualizing, analyzing, and exporting audit results.
-
-tool.py�? QA Audio Call Selector
-Imports and Setup
-* import streamlit as st: Loads Streamlit, the web app framework used for UI.
-* import os, random, pandas as pd: Loads OS utilities, random sampling, and pandas for data manipulation.
-* from datetime import datetime: For timestamping audit logs.
-* import re: For regular expressions, used in filename parsing.
-* import plotly.express as px: For generating charts (used in summary).
-* st.set_page_config(...): Sets the page title and layout for the Streamlit app.
-* st.title(...): Displays the app title
-
-
-Session State Initialization
-* Checks if�'uploaded_files_folder'�exists in session state; if not, initializes it to�None. This is used to store the temporary directory for uploaded files.
-Input Method Selection
-* input_method = st.radio(...): Lets the user choose between selecting a folder or uploading files.
-* If folder path is chosen, a text input is shown for the folder path.
-* If upload is chosen, a file uploader is shown for audio files (MP3, WAV, M4A).
-File Handling
-* If files are uploaded, they are saved to a temporary directory.
-* The app displays success or info messages based on the upload status.
-File Discovery
-* If a valid folder path is provided, the app lists all audio files in the folder.
-* If no files are found, a warning is shown.
-Data Preparation
-* Creates a DataFrame (df) with file names.
-* Extracts agent names and call dates from filenames using regular expressions.
-* Initializes all columns required for the audit, including metadata and audit questions.
-Audit Sampling
-* Lets the user choose between pure random or stratified sampling by agent.
-* Selects a sample of calls for auditing based on the chosen method.
-
-Audit Form
-* For each selected call, displays metadata and audit questions.
-* Initializes session state for each field to preserve user input.
-* Audit questions and their scores are aligned with the provided benchmark (e.g., "Did CCO open the call using the appropriate greetings?" ? 3 points).
-* Uses selectboxes and text inputs for user responses.
-Audit Log Saving
-* When the user clicks "Save Audit Log":
-o Updates the DataFrame with user responses.
-o Calculates the total score for each call based on the benchmark weights.
-o Saves the audit log as an Excel file with a timestamped filename.
-o Displays a summary and statistics (average score, agent performance, etc.).
-Relevance and Impact
-* This tool streamlines the QA process for call audits, ensuring consistent scoring and easy data entry.
-* The use of session state ensures a smooth user experience.
-* The audit log format is designed for seamless integration with the dashboard.
-
-dashboard.py�? QA Audit Dashboard
-Imports and Setup
-* Loads Streamlit, pandas, Plotly, datetime, glob, io, and openpyxl for UI, data, charts, and Excel export.
-* Sets the dashboard page title and layout.
-Audit Log Loading
-* load_all_audit_logs(): Loads all audit log Excel files matching�audit_log_*.xlsx.
-* Combines them into a single DataFrame for analysis.
-
-Sidebar Filters
-* Lets users filter by date range (using call date if available), agent, and score range.
-* Ensures only relevant records are shown in the dashboard.
-Main Metrics
-* Displays total calls audited, average score, unique agents, and comments provided.
-Tabs
-* Overview: Shows score distribution and average score gauge (charts use dark green for visual consistency).
-* Agent Performance: Shows agent-wise average scores and call counts.
-* Timeline: Shows trends over time using call dates (not audit timestamps).
-* Comments: Displays comments provided during audits.
-* Raw Data: Shows the underlying audit data.
-
-Excel Export
-* Allows users to download the audit data and analytics as a multi-sheet Excel file.
-* Each sheet's column headers are styled with a white background and bold dark green font for clarity.
-* Includes detailed sheets:
-o Audit Log
-o Individual Performance
-o Quality Metrics Trend (with benchmark weights)
-o Team Performance Summary
-Relevance and Impact
-* The dashboard provides actionable insights into call quality, agent performance, and trends.
-* The use of call dates ensures accurate timeline analysis.
-* The export feature enables further reporting and sharing.
-* Visual and stylistic enhancements improve usability and presentation.
-
-Overall Impact
-* Consistency: The audit tool and dashboard are tightly integrated, using a shared data format and scoring system.
-* Efficiency: Automates sampling, scoring, and reporting, saving time for QA teams.
-* Accuracy: Ensures audits are scored according to the benchmark, with clear documentation and traceability.
-* Actionable Insights: The dashboard enables data-driven decisions for training, process improvement, and quality assurance.
-* Professional Presentation: Visual and export enhancements make the tool suitable for both internal and external reporting.
-
+**For further details, see `DOCUMENTATION.md` for line-by-line explanations.**

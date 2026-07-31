@@ -13,6 +13,11 @@ st.set_page_config(page_title="QA Audit Platform", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "Logos", "logo.png")
+ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
+ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
+DEFAULT_CALLS_FOLDER = os.path.join(BASE_DIR, "New call list")
+UNFINISHED_CALLS_DIR = os.path.join(BASE_DIR, "unfinished calls")
+UNFINISHED_CALLS_FILE = os.path.join(UNFINISHED_CALLS_DIR, "unfinished_calls.xlsx")
 
 # --- User Authentication and RBAC ---
 import streamlit_authenticator as stauth
@@ -64,6 +69,52 @@ def get_user_role(username):
         "edem.dzitrie@nationwidemh.com": "supervisor"
     }
     return role_map.get(username, None)
+
+def get_auditor_users():
+    """Return {username: display_name} for every account with the 'auditor' role."""
+    return {
+        u: info["name"]
+        for u, info in credentials["usernames"].items()
+        if get_user_role(u) == "auditor"
+    }
+
+def load_available_calls(folder_path, exclude_files=None):
+    """List audio files in folder_path, inferring the Agent from the filename."""
+    if not folder_path or not os.path.isdir(folder_path):
+        return pd.DataFrame(columns=["File_Name", "Agent", "Contact"])
+
+    files = [f for f in os.listdir(folder_path) if f.lower().endswith((".mp3", ".wav", ".m4a"))]
+    if exclude_files:
+        files = [f for f in files if f not in exclude_files]
+
+    df = pd.DataFrame({"File_Name": files})
+    if df.empty:
+        df["Agent"] = []
+        df["Contact"] = []
+        return df
+
+    base = df["File_Name"].str.rsplit(".", n=1).str[0]
+    df["Agent"] = base.str.split("_").str[0].str.strip("[]").fillna("Unknown").replace("", "Unknown")
+    df["Contact"] = df["File_Name"].apply(lambda f: os.path.join(folder_path, f))
+    return df[["File_Name", "Agent", "Contact"]]
+
+def load_existing_assignments():
+    """Load the full assignment history from ASSIGNMENTS_FILE, if it exists."""
+    columns = ["Auditor", "Auditor_Email", "File_Name", "Agent", "Contact",
+               "Assigned_By", "Assigned_By_Email", "Assigned_At", "Status"]
+    if os.path.exists(ASSIGNMENTS_FILE):
+        try:
+            return pd.read_excel(ASSIGNMENTS_FILE)
+        except Exception:
+            pass
+    return pd.DataFrame(columns=columns)
+
+def save_assignments(new_rows_df):
+    """Append new_rows_df to the persisted assignment history and save."""
+    os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
+    combined = pd.concat([load_existing_assignments(), new_rows_df], ignore_index=True)
+    combined.to_excel(ASSIGNMENTS_FILE, index=False)
+    return combined
 
 if authentication_status == False:
     st.error("Invalid credentials")
@@ -181,17 +232,149 @@ if app_mode == "🏠 Home":
 # ============================================
 elif app_mode == "🛠️ Tool":
     st.title("🛠️ QA Audio Call Selector")
-    
+
+    if user_role == "supervisor":
+        st.header("🗂️ Supervisor Dashboard — Call Assignment")
+
+        auditors = get_auditor_users()
+        if not auditors:
+            st.warning("No auditor accounts are configured.")
+        else:
+            st.subheader("1️⃣ Select Auditors")
+            num_auditors = st.number_input(
+                "How many auditors will participate in this round?",
+                min_value=1, max_value=len(auditors), value=min(3, len(auditors)),
+                key="num_auditors_input"
+            )
+
+            selected_auditor_usernames = st.multiselect(
+                "Select which auditors will participate:",
+                options=list(auditors.keys()),
+                format_func=lambda u: auditors[u],
+                max_selections=int(num_auditors),
+                key="selected_auditors_input"
+            )
+
+            if len(selected_auditor_usernames) < num_auditors:
+                st.info(f"Please select {int(num_auditors)} auditor(s). Currently selected: {len(selected_auditor_usernames)}.")
+
+            st.subheader("2️⃣ Calls per Auditor")
+            calls_per_auditor = {}
+            if selected_auditor_usernames:
+                cols = st.columns(min(len(selected_auditor_usernames), 4))
+                for idx, u in enumerate(selected_auditor_usernames):
+                    with cols[idx % len(cols)]:
+                        calls_per_auditor[u] = st.number_input(
+                            f"Calls for {auditors[u]}",
+                            min_value=0, value=5, step=1, key=f"calls_count_{u}"
+                        )
+
+            st.subheader("3️⃣ Call Source")
+            calls_folder = st.text_input(
+                "📁 Folder containing calls to assign:",
+                value=DEFAULT_CALLS_FOLDER, key="assign_calls_folder"
+            )
+            allow_reassign = st.checkbox(
+                "Allow reassigning calls that were already assigned previously",
+                value=False, key="allow_reassign_checkbox"
+            )
+
+            if st.button("🚀 Assign Calls", type="primary"):
+                if len(selected_auditor_usernames) != num_auditors:
+                    st.error(f"Select exactly {int(num_auditors)} auditor(s) before assigning.")
+                    st.stop()
+
+                total_requested = sum(calls_per_auditor.values())
+                if total_requested == 0:
+                    st.error("Specify at least one call for at least one auditor.")
+                    st.stop()
+
+                existing_assignments = load_existing_assignments()
+                previously_assigned_files = (
+                    set(existing_assignments["File_Name"])
+                    if not allow_reassign and "File_Name" in existing_assignments.columns
+                    else set()
+                )
+
+                available = load_available_calls(calls_folder, exclude_files=previously_assigned_files)
+                if available.empty:
+                    st.error("No available (unassigned) calls found in the specified folder.")
+                    st.stop()
+
+                if total_requested > len(available):
+                    st.warning(
+                        f"Only {len(available)} unassigned call(s) available, but {total_requested} were "
+                        "requested. Calls will be distributed as evenly as possible."
+                    )
+
+                pool = available.sample(frac=1).reset_index(drop=True)
+                assigned_rows = []
+                cursor = 0
+                for u, count in calls_per_auditor.items():
+                    take = max(min(int(count), len(pool) - cursor), 0)
+                    chunk = pool.iloc[cursor: cursor + take]
+                    cursor += take
+                    for _, row in chunk.iterrows():
+                        assigned_rows.append({
+                            "Auditor": auditors[u],
+                            "Auditor_Email": u,
+                            "File_Name": row["File_Name"],
+                            "Agent": row["Agent"],
+                            "Contact": row["Contact"],
+                            "Assigned_By": name,
+                            "Assigned_By_Email": username,
+                            "Assigned_At": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                            "Status": "Assigned"
+                        })
+
+                if not assigned_rows:
+                    st.error("No calls could be assigned — check the call source folder and previously assigned calls.")
+                    st.stop()
+
+                new_assignments_df = pd.DataFrame(assigned_rows)
+                save_assignments(new_assignments_df)
+                st.session_state["latest_assignments"] = new_assignments_df
+                st.success(
+                    f"✅ Assigned {len(new_assignments_df)} call(s) across {len(calls_per_auditor)} "
+                    f"auditor(s). Saved to {ASSIGNMENTS_FILE}"
+                )
+
+            if "latest_assignments" in st.session_state:
+                st.subheader("📋 Latest Assignment Batch")
+                st.dataframe(st.session_state["latest_assignments"], use_container_width=True, hide_index=True)
+
+                assignments_buffer = io.BytesIO()
+                st.session_state["latest_assignments"].to_excel(assignments_buffer, index=False)
+                assignments_buffer.seek(0)
+                st.download_button(
+                    "⬇️ Download This Batch (Excel)",
+                    data=assignments_buffer,
+                    file_name=f"call_assignments_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="download_latest_assignments"
+                )
+
+            st.subheader("📚 All Assignments on Record")
+            all_assignments = load_existing_assignments()
+            if not all_assignments.empty:
+                st.dataframe(all_assignments, use_container_width=True, hide_index=True)
+            else:
+                st.info("No assignments recorded yet.")
+
+        st.markdown("---")
+
     # Initialize session state for uploaded files
     if 'uploaded_files_folder' not in st.session_state:
         st.session_state.uploaded_files_folder = None
     
     # Choose input method
-    input_method = st.radio("Choose input method:", ["📁 From Folder Path", "📤 Upload Files"], horizontal=True)
+    input_method = None if user_role == "auditor" else st.radio("Choose input method:", ["📁 From Folder Path", "📤 Upload Files"], horizontal=True)
     
     folder_path = None
     
-    if input_method == "📁 From Folder Path":
+    if user_role == "auditor":
+        folder_path = None
+    elif input_method == "📁 From Folder Path":
         # Folder input
         folder_path = st.text_input("📁 Enter or select folder path containing call recordings:")
     
@@ -226,13 +409,48 @@ elif app_mode == "🛠️ Tool":
             folder_path = None
     
     
-    if folder_path and os.path.isdir(folder_path):
-        files = [f for f in os.listdir(folder_path) if f.lower().endswith((".mp3", ".wav", ".m4a"))]
+    if user_role == "auditor" or (folder_path and os.path.isdir(folder_path)):
+        if user_role == "auditor":
+            my_assignments = load_existing_assignments()
+            if not my_assignments.empty and "Auditor_Email" in my_assignments.columns:
+                my_assignments = my_assignments[my_assignments["Auditor_Email"] == username].copy()
+            else:
+                my_assignments = my_assignments.iloc[0:0].copy()
+
+            completed_files = set()
+            for log_file in glob.glob("Audit_log_calls/audit_log_*.xlsx"):
+                try:
+                    log_df = pd.read_excel(log_file)
+                    if "File_Name" in log_df.columns:
+                        completed_files.update(log_df["File_Name"].dropna().astype(str))
+                except Exception:
+                    pass
+
+            if not my_assignments.empty and "File_Name" in my_assignments.columns:
+                assigned_calls = my_assignments[~my_assignments["File_Name"].isin(completed_files)].copy()
+            else:
+                assigned_calls = my_assignments.copy()
+
+            st.subheader("📋 My Assigned Calls")
+            if my_assignments.empty:
+                st.info("No calls have been assigned to you yet.")
+            else:
+                st.dataframe(my_assignments, use_container_width=True, hide_index=True)
+
+            files = assigned_calls["File_Name"].tolist() if "File_Name" in assigned_calls.columns else []
+        else:
+            files = [f for f in os.listdir(folder_path) if f.lower().endswith((".mp3", ".wav", ".m4a"))]
     
         if not files:
-            st.warning("No audio files found in this folder.")
+            if user_role == "auditor":
+                st.success("✅ No unfinished assigned calls — you're all caught up!")
+            else:
+                st.warning("No audio files found in this folder.")
         else:
-            st.success(f"Found {len(files)} recordings.")
+            if user_role == "auditor":
+                st.info(f"🎧 {len(files)} assigned call(s) awaiting audit.")
+            else:
+                st.success(f"Found {len(files)} recordings.")
     
             # Optional: extract agent name or date from filenames
             df = pd.DataFrame({"File_Name": files})
@@ -264,7 +482,11 @@ elif app_mode == "🛠️ Tool":
                 return "Unknown"
     
             df["Date"] = df["Base"].apply(_extract_date_from_base)
-            df["Contact"] = df["File_Name"].apply(lambda x: os.path.join(folder_path, x))
+            if user_role == "auditor":
+                contact_map = dict(zip(assigned_calls["File_Name"], assigned_calls["Contact"])) if "Contact" in assigned_calls.columns else {}
+                df["Contact"] = df["File_Name"].map(contact_map)
+            else:
+                df["Contact"] = df["File_Name"].apply(lambda x: os.path.join(folder_path, x))
     
             # Initialize all QA columns with exact names from audit report
             df["Id"] = range(1, len(df) + 1)
@@ -296,10 +518,15 @@ elif app_mode == "🛠️ Tool":
             df["Do you have any other comments you would like to share?"] = ""
     
             # Choose sampling type
-            sampling_type = st.radio("🎯 Sampling Type", ["Pure Random", "Stratified by Agent"])
-            sample_size = st.number_input("🔢 Number of Calls to Audit", min_value=1, value=5)
+            if user_role == "auditor":
+                sampling_type = "Pure Random"
+                st.caption("All of your unfinished assigned calls will be loaded for auditing.")
+            else:
+                sampling_type = st.radio("🎯 Sampling Type", ["Pure Random", "Stratified by Agent"])
+            sample_size = len(df) if user_role == "auditor" else st.number_input("🔢 Number of Calls to Audit", min_value=1, value=5)
     
-            if st.button("🎲 Select Random Calls"):
+            button_label = "📝 Load My Assigned Calls" if user_role == "auditor" else "🎲 Select Random Calls"
+            if st.button(button_label):
                 selected = pd.DataFrame()
     
                 if sampling_type == "Pure Random":
@@ -667,12 +894,13 @@ elif app_mode == "📊 Dashboard":
         st.metric("💬 Comments Provided", comments_count)
     
     # Tabs for different views
-    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
         "📈 Overview",
         "👥 Agent Performance",
         "📅 Timeline",
         "📝 Comments",
-        "🗂️ Raw Data"
+        "🗂️ Raw Data",
+        "🕒 Unfinished Calls"
     ])
     
     with tab1:
@@ -1371,23 +1599,26 @@ elif app_mode == "📊 Dashboard":
             
             # Create Overall Performance chart
             chart1 = BarChart()
-            chart1.type = "col"
+            chart1.type = "bar"
             chart1.title = "Overall Performance"
-            chart1.y_axis.title = 'Performance %'
             chart1.x_axis.title = 'Metrics'
+            chart1.y_axis.title = 'Performance %'
             chart1.x_axis.tickLblPos = "low"
             chart1.x_axis.delete = False
+            chart1.x_axis.scaling.orientation = "maxMin"
+            chart1.y_axis.numFmt = '0%'
             data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
             cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
             chart1.add_data(data1, titles_from_data=True)
             chart1.set_categories(cats1)
-            chart1.height = 9
-            chart1.width = 18
+            chart1.height = 11
+            chart1.width = 20
             chart1.series[0].graphicalProperties.solidFill = "006400"
             # Add data labels with percentages
             from openpyxl.chart.label import DataLabelList
             chart1.dataLabels = DataLabelList()
             chart1.dataLabels.showVal = True
+            chart1.dataLabels.numFmt = '0.0%'
             ws_charts.add_chart(chart1, "D2")
             
             # ===== Chart 2: Introduction and Conclusion =====
@@ -1410,23 +1641,26 @@ elif app_mode == "📊 Dashboard":
             
             # Create Introduction & Conclusion chart
             chart2 = BarChart()
-            chart2.type = "col"
+            chart2.type = "bar"
             chart2.title = "Introduction & Conclusion"
-            chart2.y_axis.title = 'Performance %'
             chart2.x_axis.title = 'Metrics'
+            chart2.y_axis.title = 'Performance %'
             chart2.x_axis.tickLblPos = "low"
             chart2.x_axis.delete = False
+            chart2.x_axis.scaling.orientation = "maxMin"
+            chart2.y_axis.numFmt = '0%'
             data2 = Reference(ws_charts, min_col=2, min_row=chart2_row, max_row=chart2_row + len(intro_conclusion))
             cats2 = Reference(ws_charts, min_col=1, min_row=chart2_row + 1, max_row=chart2_row + len(intro_conclusion))
             chart2.add_data(data2, titles_from_data=True)
             chart2.set_categories(cats2)
-            chart2.height = 9
-            chart2.width = 18
+            chart2.height = 5
+            chart2.width = 20
             chart2.series[0].graphicalProperties.solidFill = "00B0F0"
             # Add data labels with percentages
             chart2.dataLabels = DataLabelList()
             chart2.dataLabels.showVal = True
-            ws_charts.add_chart(chart2, "J2")
+            chart2.dataLabels.numFmt = '0.0%'
+            ws_charts.add_chart(chart2, "D28")
             
             # ===== Chart 3: Problem Solving =====
             chart3_row = chart2_row + len(intro_conclusion) + 3
@@ -1448,23 +1682,26 @@ elif app_mode == "📊 Dashboard":
             
             # Create Problem Solving chart
             chart3 = BarChart()
-            chart3.type = "col"
+            chart3.type = "bar"
             chart3.title = "Problem Solving"
-            chart3.y_axis.title = 'Performance %'
             chart3.x_axis.title = 'Metrics'
+            chart3.y_axis.title = 'Performance %'
             chart3.x_axis.tickLblPos = "low"
             chart3.x_axis.delete = False
+            chart3.x_axis.scaling.orientation = "maxMin"
+            chart3.y_axis.numFmt = '0%'
             data3 = Reference(ws_charts, min_col=2, min_row=chart3_row, max_row=chart3_row + len(problem_solving))
             cats3 = Reference(ws_charts, min_col=1, min_row=chart3_row + 1, max_row=chart3_row + len(problem_solving))
             chart3.add_data(data3, titles_from_data=True)
             chart3.set_categories(cats3)
-            chart3.height = 9
-            chart3.width = 18
+            chart3.height = 7
+            chart3.width = 20
             chart3.series[0].graphicalProperties.solidFill = "A9D18E"
             # Add data labels with percentages
             chart3.dataLabels = DataLabelList()
             chart3.dataLabels.showVal = True
-            ws_charts.add_chart(chart3, "D" + str(chart2_row + 2))
+            chart3.dataLabels.numFmt = '0.0%'
+            ws_charts.add_chart(chart3, "D42")
             
             # ===== Chart 4: Soft Skills =====
             chart4_row = chart3_row + len(problem_solving) + 3
@@ -1486,23 +1723,26 @@ elif app_mode == "📊 Dashboard":
             
             # Create Soft Skills chart
             chart4 = BarChart()
-            chart4.type = "col"
+            chart4.type = "bar"
             chart4.title = "Soft Skills"
-            chart4.y_axis.title = 'Performance %'
             chart4.x_axis.title = 'Metrics'
+            chart4.y_axis.title = 'Performance %'
             chart4.x_axis.tickLblPos = "low"
             chart4.x_axis.delete = False
+            chart4.x_axis.scaling.orientation = "maxMin"
+            chart4.y_axis.numFmt = '0%'
             data4 = Reference(ws_charts, min_col=2, min_row=chart4_row, max_row=chart4_row + len(soft_skills))
             cats4 = Reference(ws_charts, min_col=1, min_row=chart4_row + 1, max_row=chart4_row + len(soft_skills))
             chart4.add_data(data4, titles_from_data=True)
             chart4.set_categories(cats4)
-            chart4.height = 9
-            chart4.width = 18
+            chart4.height = 7
+            chart4.width = 20
             chart4.series[0].graphicalProperties.solidFill = "FFC000"
             # Add data labels with percentages
             chart4.dataLabels = DataLabelList()
             chart4.dataLabels.showVal = True
-            ws_charts.add_chart(chart4, "J" + str(chart2_row + 2))
+            chart4.dataLabels.numFmt = '0.0%'
+            ws_charts.add_chart(chart4, "D60")
             
             # Set column widths
             ws_charts.column_dimensions['A'].width = 40
@@ -1516,3 +1756,53 @@ elif app_mode == "📊 Dashboard":
             file_name=f"qa_audit_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
         )
+
+    # Tab 6: Unfinished Calls
+    with tab6:
+        st.subheader("🕒 Unfinished Calls by Auditor")
+
+        all_assignments = load_existing_assignments()
+        if all_assignments.empty or "File_Name" not in all_assignments.columns:
+            st.info("No calls have been assigned yet.")
+        else:
+            completed_files = set(audit_data['File_Name'].dropna().astype(str)) if 'File_Name' in audit_data.columns else set()
+            unfinished_df = all_assignments[~all_assignments['File_Name'].astype(str).isin(completed_files)].copy()
+
+            # Persist the current unfinished-calls snapshot, auditor name included
+            os.makedirs(UNFINISHED_CALLS_DIR, exist_ok=True)
+            unfinished_df.to_excel(UNFINISHED_CALLS_FILE, index=False)
+
+            total_by_auditor = all_assignments.groupby('Auditor')['File_Name'].count().rename('Total Assigned Calls')
+            unfinished_by_auditor = unfinished_df.groupby('Auditor')['File_Name'].count().rename('Unfinished Calls')
+            auditor_summary = pd.concat([total_by_auditor, unfinished_by_auditor], axis=1).fillna(0)
+            auditor_summary['Unfinished Calls'] = auditor_summary['Unfinished Calls'].astype(int)
+            auditor_summary['Total Assigned Calls'] = auditor_summary['Total Assigned Calls'].astype(int)
+            auditor_summary['% Unfinished'] = (
+                auditor_summary['Unfinished Calls'] / auditor_summary['Total Assigned Calls'] * 100
+            ).round(1)
+            auditor_summary = auditor_summary.reset_index().rename(columns={'Auditor': 'Auditor Name'})
+            auditor_summary = auditor_summary.sort_values('% Unfinished', ascending=False)
+
+            col1, col2, col3 = st.columns(3)
+            with col1:
+                st.metric("🕒 Total Unfinished Calls", len(unfinished_df))
+            with col2:
+                st.metric("📋 Total Assigned Calls", len(all_assignments))
+            with col3:
+                overall_pct = (len(unfinished_df) / len(all_assignments) * 100) if len(all_assignments) > 0 else 0
+                st.metric("📊 % Unfinished (Overall)", f"{overall_pct:.1f}%")
+
+            st.dataframe(
+                auditor_summary[['Auditor Name', 'Unfinished Calls', 'Total Assigned Calls', '% Unfinished']],
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.markdown("---")
+            st.subheader("📋 Unfinished Calls Detail")
+            if unfinished_df.empty:
+                st.success("✅ No unfinished calls — every assigned call has been audited!")
+            else:
+                st.dataframe(unfinished_df, use_container_width=True, hide_index=True)
+
+            st.caption(f"Snapshot saved to: {UNFINISHED_CALLS_FILE}")

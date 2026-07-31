@@ -14,6 +14,8 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
 DEFAULT_CALLS_FOLDER = os.path.join(BASE_DIR, "New call list")
+UNFINISHED_CALLS_DIR = os.path.join(BASE_DIR, "unfinished calls")
+UNFINISHED_CALLS_FILE = os.path.join(UNFINISHED_CALLS_DIR, "unfinished_calls.xlsx")
 
 # --- User Authentication and RBAC ---
 import streamlit_authenticator as stauth
@@ -26,10 +28,14 @@ credentials = {
     "usernames": {
         "amanda.bio-marfo@nationwidemh.com": {
             "name": "Amanda Bio-Marfo",
+            "password": stauth.Hasher.hash("012")
+            },
+        "araba.quartey@nationwidemh.com": {
+            "name": "Araba Quartey",
             "password": stauth.Hasher.hash("123")
         },
         "suraiyatu.mohammed@nationwidemh.com": {
-            "name": "Surayatu Mohammed",
+            "name": "Suraiyatu Mohammed",
             "password": stauth.Hasher.hash("456")
         },
         "edem.dzitrie@nationwidemh.com": {
@@ -59,6 +65,7 @@ def get_user_role(username):
     # Example static mapping; replace with DB lookup as needed
     role_map = {
         "amanda.bio-marfo@nationwidemh.com": "admin",
+        "araba.quartey@nationwidemh.com": "auditor",
         "suraiyatu.mohammed@nationwidemh.com": "auditor",
         "edem.dzitrie@nationwidemh.com": "supervisor"
     }
@@ -71,6 +78,17 @@ def get_auditor_users():
         for u, info in credentials["usernames"].items()
         if get_user_role(u) == "auditor"
     }
+
+# Display logo in the top right corner
+logo_path = os.path.join(BASE_DIR, "Logos", "logo.png")
+col_title, col_logo = st.columns([6, 1])
+with col_logo:
+    if os.path.exists(logo_path):
+        try:
+            with open(logo_path, "rb") as logo_file:
+                st.image(logo_file.read(), use_container_width=True)
+        except OSError:
+            pass
 
 def load_available_calls(folder_path, exclude_files=None):
     """List audio files in folder_path, inferring the Agent from the filename."""
@@ -114,7 +132,7 @@ def show_admin_panel():
     st.info("Admin Panel: You have full access.")
 
 def show_approval_dashboard(supervisor_name, supervisor_username):
-    st.header("🗂️ Supervisor Dashboard — Call Assignment")
+    st.header("🗂️ Supervisor Call Assignment")
 
     auditors = get_auditor_users()
     if not auditors:
@@ -302,16 +320,7 @@ if ts is not None and ts.notna().any():
         max_value=max_dt
     )
 
-# Display logo in the top right corner
-logo_path = os.path.join(BASE_DIR, "Logos", "logo.png")
-col_title, col_logo = st.columns([6, 1])
-with col_logo:
-    if os.path.exists(logo_path):
-        try:
-            with open(logo_path, "rb") as logo_file:
-                st.image(logo_file.read(), use_container_width=True)
-        except OSError:
-            pass
+
 
 filtered_data = audit_data.copy()
 if ts is not None and isinstance(date_range, (list, tuple)) and len(date_range) == 2:
@@ -386,12 +395,13 @@ with col4:
     st.metric("💬 Comments Provided", comments_count)
 
 # Tabs for different views
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
+tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "📈 Overview",
     "👥 Agent Performance",
     "📅 Timeline",
     "📝 Comments",
-    "🗂️ Raw Data"
+    "🗂️ Raw Data",
+    "🕒 Unfinished Calls"
 ])
 
 with tab1:
@@ -675,7 +685,8 @@ with tab5:
         # ===== SHEET 1: Main Audit Data =====
         export_cols = [col for col in filtered_data.columns if col not in ['Base', 'Contact']]
         filtered_data[export_cols].to_excel(writer, sheet_name=month_year, index=False, startrow=4)
-        
+        writer.sheets[month_year].sheet_view.showGridLines = False
+
         # ===== SHEET 2: Individual Performance =====
         if 'QA Score' not in filtered_data.columns:
             filtered_data['QA Score'] = float('nan')
@@ -885,3 +896,53 @@ with tab5:
         file_name=f"qa_audit_report_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
     )
+
+# Tab 6: Unfinished Calls
+with tab6:
+    st.subheader("🕒 Unfinished Calls by Auditor")
+
+    all_assignments = load_existing_assignments()
+    if all_assignments.empty or "File_Name" not in all_assignments.columns:
+        st.info("No calls have been assigned yet.")
+    else:
+        completed_files = set(audit_data['File_Name'].dropna().astype(str)) if 'File_Name' in audit_data.columns else set()
+        unfinished_df = all_assignments[~all_assignments['File_Name'].astype(str).isin(completed_files)].copy()
+
+        # Persist the current unfinished-calls snapshot, auditor name included
+        os.makedirs(UNFINISHED_CALLS_DIR, exist_ok=True)
+        unfinished_df.to_excel(UNFINISHED_CALLS_FILE, index=False)
+
+        total_by_auditor = all_assignments.groupby('Auditor')['File_Name'].count().rename('Total Assigned Calls')
+        unfinished_by_auditor = unfinished_df.groupby('Auditor')['File_Name'].count().rename('Unfinished Calls')
+        auditor_summary = pd.concat([total_by_auditor, unfinished_by_auditor], axis=1).fillna(0)
+        auditor_summary['Unfinished Calls'] = auditor_summary['Unfinished Calls'].astype(int)
+        auditor_summary['Total Assigned Calls'] = auditor_summary['Total Assigned Calls'].astype(int)
+        auditor_summary['% Unfinished'] = (
+            auditor_summary['Unfinished Calls'] / auditor_summary['Total Assigned Calls'] * 100
+        ).round(1)
+        auditor_summary = auditor_summary.reset_index().rename(columns={'Auditor': 'Auditor Name'})
+        auditor_summary = auditor_summary.sort_values('% Unfinished', ascending=False)
+
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("🕒 Total Unfinished Calls", len(unfinished_df))
+        with col2:
+            st.metric("📋 Total Assigned Calls", len(all_assignments))
+        with col3:
+            overall_pct = (len(unfinished_df) / len(all_assignments) * 100) if len(all_assignments) > 0 else 0
+            st.metric("📊 % Unfinished (Overall)", f"{overall_pct:.1f}%")
+
+        st.dataframe(
+            auditor_summary[['Auditor Name', 'Unfinished Calls', 'Total Assigned Calls', '% Unfinished']],
+            use_container_width=True,
+            hide_index=True
+        )
+
+        st.markdown("---")
+        st.subheader("📋 Unfinished Calls Detail")
+        if unfinished_df.empty:
+            st.success("✅ No unfinished calls — every assigned call has been audited!")
+        else:
+            st.dataframe(unfinished_df, use_container_width=True, hide_index=True)
+
+        st.caption(f"Snapshot saved to: {UNFINISHED_CALLS_FILE}")
