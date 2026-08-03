@@ -7,6 +7,7 @@ from datetime import datetime
 import glob
 import io
 import re
+from excel_sanitization import sanitize_dataframe_for_excel
 
 st.set_page_config(page_title="QA Audit Dashboard", layout="wide")
 
@@ -23,7 +24,6 @@ import streamlit_authenticator as stauth
 SHARED_COOKIE_NAME = "qa_audit_platform_session"
 SHARED_COOKIE_KEY = "qa_audit_platform_cookie_key_2026_secure"
 
-# Passwords are pre-hashed; auto_hash=False prevents double-hashing
 credentials = {
     "usernames": {
         "amanda.bio-marfo@nationwidemh.com": {
@@ -62,7 +62,6 @@ authentication_status = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
 
 def get_user_role(username):
-    # Example static mapping; replace with DB lookup as needed
     role_map = {
         "amanda.bio-marfo@nationwidemh.com": "admin",
         "araba.quartey@nationwidemh.com": "auditor",
@@ -125,7 +124,7 @@ def save_assignments(new_rows_df):
     """Append new_rows_df to the persisted assignment history and save."""
     os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
     combined = pd.concat([load_existing_assignments(), new_rows_df], ignore_index=True)
-    combined.to_excel(ASSIGNMENTS_FILE, index=False)
+    sanitize_dataframe_for_excel(combined).to_excel(ASSIGNMENTS_FILE, index=False)
     return combined
 
 def show_admin_panel():
@@ -243,7 +242,7 @@ def show_approval_dashboard(supervisor_name, supervisor_username):
         st.dataframe(st.session_state["latest_assignments"], use_container_width=True, hide_index=True)
 
         excel_buffer = io.BytesIO()
-        st.session_state["latest_assignments"].to_excel(excel_buffer, index=False)
+        sanitize_dataframe_for_excel(st.session_state["latest_assignments"]).to_excel(excel_buffer, index=False)
         excel_buffer.seek(0)
         st.download_button(
             "⬇️ Download This Batch (Excel)",
@@ -286,16 +285,15 @@ authenticator.logout(
     callback=_post_logout_cleanup
 )
 
-if user_role not in ("admin", "supervisor"):
-    st.error("Access denied. Only admin and supervisor accounts are allowed on this page.")
+if user_role == "auditor":
+    st.error("Access denied. Only supervisor accounts are allowed on this page.")
     st.stop()
 
-if user_role == "admin":
-    show_admin_panel()
-elif user_role == "supervisor":
+if user_role != "supervisor":
+    st.stop()
+
+if user_role == "supervisor":
     show_approval_dashboard(name, username)
-elif user_role == "auditor":
-    show_audit_form()
 
 # Load and combine all audit log files into audit_data
 audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
@@ -751,7 +749,7 @@ with tab5:
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         # ===== SHEET 1: Main Audit Data =====
         export_cols = [col for col in filtered_data.columns if col not in ['Base', 'Contact']]
-        filtered_data[export_cols].to_excel(writer, sheet_name=month_year, index=False, startrow=4)
+        sanitize_dataframe_for_excel(filtered_data[export_cols]).to_excel(writer, sheet_name=month_year, index=False, startrow=4)
         writer.sheets[month_year].sheet_view.showGridLines = False
 
         # ===== SHEET 2: Individual Performance =====
@@ -977,7 +975,7 @@ with tab6:
 
         # Persist the current unfinished-calls snapshot, auditor name included
         os.makedirs(UNFINISHED_CALLS_DIR, exist_ok=True)
-        unfinished_df.to_excel(UNFINISHED_CALLS_FILE, index=False)
+        sanitize_dataframe_for_excel(unfinished_df).to_excel(UNFINISHED_CALLS_FILE, index=False)
 
         total_by_auditor = all_assignments.groupby('Auditor')['File_Name'].count().rename('Total Assigned Calls')
         unfinished_by_auditor = unfinished_df.groupby('Auditor')['File_Name'].count().rename('Unfinished Calls')

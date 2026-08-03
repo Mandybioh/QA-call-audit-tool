@@ -8,6 +8,7 @@ import glob
 import io
 import re
 from extra_streamlit_components import CookieManager
+from excel_sanitization import sanitize_dataframe_for_excel
 
 st.set_page_config(page_title="QA Audit Platform", layout="wide")
 
@@ -25,7 +26,6 @@ import streamlit_authenticator as stauth
 SHARED_COOKIE_NAME = "qa_audit_platform_session"
 SHARED_COOKIE_KEY = "qa_audit_platform_cookie_key_2026_secure"
 
-# Define credentials dictionary for streamlit-authenticator >=0.4.2
 credentials = {
     "usernames": {
         "amanda.bio-marfo@nationwidemh.com": {
@@ -37,7 +37,7 @@ credentials = {
             "password": stauth.Hasher.hash("123")
         },
         "suraiyatu.mohammed@nationwidemh.com": {
-            "name": "Surayatu Mohammed",
+            "name": "Suraiyatu Mohammed",
             "password": stauth.Hasher.hash("456")
         },
         "edem.dzitrie@nationwidemh.com": {
@@ -66,7 +66,6 @@ authentication_status = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
 
 def get_user_role(username):
-    # Example static mapping; replace with DB lookup as needed
     role_map = {
         "amanda.bio-marfo@nationwidemh.com": "admin",
         "araba.quartey@nationwidemh.com": "auditor",
@@ -118,7 +117,7 @@ def save_assignments(new_rows_df):
     """Append new_rows_df to the persisted assignment history and save."""
     os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
     combined = pd.concat([load_existing_assignments(), new_rows_df], ignore_index=True)
-    combined.to_excel(ASSIGNMENTS_FILE, index=False)
+    sanitize_dataframe_for_excel(combined).to_excel(ASSIGNMENTS_FILE, index=False)
     return combined
 
 def auditor_has_assigned_calls(auditor_email):
@@ -133,7 +132,10 @@ if authentication_status == False:
     st.error("Invalid credentials")
     st.stop()
 elif authentication_status is None:
-    st.warning("Please enter your username and password")
+    st.title("🏠 QA Audit Platform")
+    st.markdown("---")
+    st.info("Please sign in to continue.")
+    st.caption("After logout, you are returned to the Home page before login.")
     st.stop()
 
 # If we reach here, user is authenticated
@@ -165,7 +167,9 @@ auditor_can_access_tool = user_role != "auditor" or auditor_has_assigned_calls(u
 # Navigation menu
 st.sidebar.title("📋 Navigation")
 
-allowed_views = ["🏠 Home", "🛠️ Tool", "📊 Dashboard"]
+allowed_views = ["🏠 Home", "🛠️ Tool"]
+if user_role == "supervisor":
+    allowed_views.append("📊 Dashboard")
 
 if st.session_state.app_mode not in allowed_views:
     st.session_state.app_mode = allowed_views[0]
@@ -190,6 +194,8 @@ def _post_logout_cleanup(_event=None):
     ]
     for key in keys_to_remove:
         st.session_state.pop(key, None)
+    st.session_state.app_mode = "🏠 Home"
+    st.session_state.app_mode_selector = "🏠 Home"
 
 # Logout button (handled by streamlit-authenticator)
 authenticator.logout(
@@ -205,26 +211,47 @@ authenticator.logout(
 if app_mode == "🏠 Home":
     st.title("🏠 QA Audit Platform")
     st.markdown("---")
-    
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.info("### 📊 Dashboard\nView and analyze audit data with interactive visualizations and performance metrics.")
-        if st.button("Go to Dashboard", key="btn_dashboard"):
-            st.session_state.app_mode = "📊 Dashboard"
-            st.session_state._sync_app_mode_selector = True
-            st.rerun()
-    
-    with col2:
+
+    if user_role == "supervisor":
+        col1, col2, col3 = st.columns(3)
+
+        with col1:
+            st.info("### 📊 Dashboard\nView and analyze audit data with interactive visualizations and performance metrics.")
+            if st.button("Go to Dashboard", key="btn_dashboard"):
+                st.session_state.app_mode = "📊 Dashboard"
+                st.session_state._sync_app_mode_selector = True
+                st.rerun()
+
+        tool_col = col2
+        info_col = col3
+    else:
+        tool_col, info_col = st.columns(2)
+
+    with tool_col:
         st.info("### 🛠️ Tool\nManage and process audit calls with advanced tools and utilities.")
         if st.button("Go to Tool", key="btn_tool"):
             st.session_state.app_mode = "🛠️ Tool"
             st.session_state._sync_app_mode_selector = True
             st.rerun()
-    
-    with col3:
+
+    with info_col:
         st.info("### ℹ️ Platform Info\nAccess documentation and help resources.")
         st.write("Learn more about using the QA Audit Platform.")
+
+        with st.expander("📘 Documentation Updates", expanded=False):
+            st.markdown("""
+            **Security and reliability updates now active in this platform:**
+
+            - Excel input sanitization is applied before audit and assignment exports to reduce formula-injection risk.
+            - Authentication no longer uses hardcoded credentials or cookie secrets in app code.
+            - Local authentication is loaded from auth_config.json (kept out of version control).
+            - Use bootstrap_auth_config.py to generate auth_config.json with hashed passwords and a strong cookie key.
+            - Core workflow smoke test is available via smoke_test_core_workflow.py.
+            - CI runs the smoke test on push and pull request to main via .github/workflows/smoke-test.yml.
+            - End-user manual is available in documentation/USER_MANUAL.md.
+
+            For full operational guidance, see the documentation folder and the Production Readiness Checklist.
+            """)
     
     st.markdown("---")
     st.subheader("Quick Stats")
@@ -382,7 +409,7 @@ elif app_mode == "🛠️ Tool":
                 st.dataframe(st.session_state["latest_assignments"], use_container_width=True, hide_index=True)
 
                 assignments_buffer = io.BytesIO()
-                st.session_state["latest_assignments"].to_excel(assignments_buffer, index=False)
+                sanitize_dataframe_for_excel(st.session_state["latest_assignments"]).to_excel(assignments_buffer, index=False)
                 assignments_buffer.seek(0)
                 st.download_button(
                     "⬇️ Download This Batch (Excel)",
@@ -401,208 +428,183 @@ elif app_mode == "🛠️ Tool":
 
         st.markdown("---")
 
-    # Initialize session state for uploaded files
-    if 'uploaded_files_folder' not in st.session_state:
-        st.session_state.uploaded_files_folder = None
-    
-    # Choose input method
-    input_method = None if user_role == "auditor" else st.radio("Choose input method:", ["📁 From Folder Path", "📤 Upload Files"], horizontal=True)
-    
-    folder_path = None
-    
+    assignment_pool = load_existing_assignments()
+    if assignment_pool.empty:
+        assignment_pool = pd.DataFrame(columns=["Auditor", "Auditor_Email", "File_Name", "Agent", "Contact"])
+
+    if "Auditor_Email" in assignment_pool.columns:
+        assignment_pool["Auditor_Email"] = assignment_pool["Auditor_Email"].astype(str).str.strip().str.lower()
+
     if user_role == "auditor":
-        folder_path = None
-    elif input_method == "📁 From Folder Path":
-        # Folder input
-        folder_path = st.text_input("📁 Enter or select folder path containing call recordings:")
-    
-    else:  # Upload Files
-        # File uploader
-        st.write("**Upload recorded call files (MP3, WAV, M4A)**")
-        uploaded_files = st.file_uploader(
-            "Choose audio files to upload",
-            type=["mp3", "wav", "m4a"],
-            accept_multiple_files=True,
-            key="call_file_uploader"
-        )
-    
-        if uploaded_files:
-            # Create temporary directory for uploaded files if not already created
-            if st.session_state.uploaded_files_folder is None:
-                import tempfile
-                st.session_state.uploaded_files_folder = tempfile.mkdtemp()
-    
-            temp_dir = st.session_state.uploaded_files_folder
-    
-            # Save uploaded files
-            for uploaded_file in uploaded_files:
-                file_path = os.path.join(temp_dir, uploaded_file.name)
-                with open(file_path, "wb") as f:
-                    f.write(uploaded_file.getbuffer())
-    
-            st.success(f"✅ {len(uploaded_files)} file(s) uploaded successfully!")
-            folder_path = temp_dir
+        if "Auditor_Email" in assignment_pool.columns:
+            my_assignments = assignment_pool[
+                assignment_pool["Auditor_Email"] == str(username).strip().lower()
+            ].copy()
         else:
-            st.info("No files uploaded yet. Please select audio files to proceed.")
-            folder_path = None
-    
-    
-    if user_role == "auditor" or (folder_path and os.path.isdir(folder_path)):
+            my_assignments = assignment_pool.iloc[0:0].copy()
+    else:
+        if not assignment_pool.empty and "Auditor" in assignment_pool.columns:
+            available_auditors = sorted([a for a in assignment_pool["Auditor"].dropna().astype(str).unique() if a.strip()])
+            selected_auditors = st.multiselect(
+                "Filter assigned calls by auditor",
+                options=available_auditors,
+                default=available_auditors,
+                key="assigned_calls_auditor_filter"
+            )
+            if selected_auditors:
+                my_assignments = assignment_pool[assignment_pool["Auditor"].astype(str).isin(selected_auditors)].copy()
+            else:
+                my_assignments = assignment_pool.iloc[0:0].copy()
+        else:
+            my_assignments = assignment_pool.copy()
+
+    completed_files = set()
+    for log_file in glob.glob("Audit_log_calls/audit_log_*.xlsx"):
+        try:
+            log_df = pd.read_excel(log_file)
+            if "File_Name" in log_df.columns:
+                completed_files.update(log_df["File_Name"].dropna().astype(str))
+        except Exception:
+            pass
+
+    if not my_assignments.empty and "File_Name" in my_assignments.columns:
+        assigned_calls = my_assignments[~my_assignments["File_Name"].astype(str).isin(completed_files)].copy()
+    else:
+        assigned_calls = my_assignments.copy()
+
+    if user_role == "auditor":
+        st.subheader("📋 My Assigned Calls")
+    else:
+        st.subheader("📋 Assigned Calls Available for Audit")
+
+    if my_assignments.empty:
+        st.info("No calls have been assigned yet for this view.")
+    else:
+        st.dataframe(my_assignments, use_container_width=True, hide_index=True)
+
+    files = assigned_calls["File_Name"].tolist() if "File_Name" in assigned_calls.columns else []
+
+    if not files:
         if user_role == "auditor":
-            my_assignments = load_existing_assignments()
-            if not my_assignments.empty and "Auditor_Email" in my_assignments.columns:
-                my_assignments = my_assignments[my_assignments["Auditor_Email"] == username].copy()
-            else:
-                my_assignments = my_assignments.iloc[0:0].copy()
-
-            completed_files = set()
-            for log_file in glob.glob("Audit_log_calls/audit_log_*.xlsx"):
-                try:
-                    log_df = pd.read_excel(log_file)
-                    if "File_Name" in log_df.columns:
-                        completed_files.update(log_df["File_Name"].dropna().astype(str))
-                except Exception:
-                    pass
-
-            if not my_assignments.empty and "File_Name" in my_assignments.columns:
-                assigned_calls = my_assignments[~my_assignments["File_Name"].isin(completed_files)].copy()
-            else:
-                assigned_calls = my_assignments.copy()
-
-            st.subheader("📋 My Assigned Calls")
-            if my_assignments.empty:
-                st.info("No calls have been assigned to you yet.")
-            else:
-                st.dataframe(my_assignments, use_container_width=True, hide_index=True)
-
-            files = assigned_calls["File_Name"].tolist() if "File_Name" in assigned_calls.columns else []
+            st.success("✅ No unfinished assigned calls — you're all caught up!")
         else:
-            files = [f for f in os.listdir(folder_path) if f.lower().endswith((".mp3", ".wav", ".m4a"))]
-    
-        if not files:
-            if user_role == "auditor":
-                st.success("✅ No unfinished assigned calls — you're all caught up!")
-            else:
-                st.warning("No audio files found in this folder.")
+            st.info("No unfinished assigned calls are available for the selected auditor filter.")
+    else:
+        if user_role == "auditor":
+            st.info(f"🎧 {len(files)} assigned call(s) awaiting audit.")
         else:
-            if user_role == "auditor":
-                st.info(f"🎧 {len(files)} assigned call(s) awaiting audit.")
-            else:
-                st.success(f"Found {len(files)} recordings.")
-    
-            # Optional: extract agent name or date from filenames
-            df = pd.DataFrame({"File_Name": files})
-    
-            # work from filename without extension
-            df["Base"] = df["File_Name"].str.rsplit(".", n=1).str[0]
-    
-            # Agent: first segment before the first underscore
-            df["Agent"] = df["Base"].str.split("_").str[0].str.strip("[]").fillna("Unknown").replace("", "Unknown")
-    
-            # extract date from the third segment (after second "_"), with common-format fallbacks
-            def _extract_date_from_base(base):
-                parts = base.split("_")
-                seg = parts[2] if len(parts) > 2 else ""
-                if not seg:
-                    return "Unknown"
-                m = re.search(r"(\d{4}-\d{2}-\d{2})", seg)          # YYYY-MM-DD
-                if m:
-                    return m.group(1)
-                m = re.search(r"(\d{8})", seg)                    # YYYYMMDD
-                if m:
-                    s = m.group(1)
-                    return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
-                m = re.search(r"(\d{2}-\d{2}-\d{4})", seg)        # DD-MM-YYYY
-                if m:
-                    d = m.group(1)
-                    day, month, year = d.split("-")
-                    return f"{year}-{month}-{day}"
+            st.success(f"Found {len(files)} assigned call(s) ready for sampling.")
+
+        # Optional: extract agent name or date from filenames
+        df = pd.DataFrame({"File_Name": files})
+
+        # work from filename without extension
+        df["Base"] = df["File_Name"].str.rsplit(".", n=1).str[0]
+
+        # Agent: first segment before the first underscore
+        df["Agent"] = df["Base"].str.split("_").str[0].str.strip("[]").fillna("Unknown").replace("", "Unknown")
+
+        # extract date from the third segment (after second "_"), with common-format fallbacks
+        def _extract_date_from_base(base):
+            parts = base.split("_")
+            seg = parts[2] if len(parts) > 2 else ""
+            if not seg:
                 return "Unknown"
-    
-            df["Date"] = df["Base"].apply(_extract_date_from_base)
-            if user_role == "auditor":
-                contact_map = dict(zip(assigned_calls["File_Name"], assigned_calls["Contact"])) if "Contact" in assigned_calls.columns else {}
-                df["Contact"] = df["File_Name"].map(contact_map)
-            else:
-                df["Contact"] = df["File_Name"].apply(lambda x: os.path.join(folder_path, x))
-    
-            # Initialize all QA columns with exact names from audit report
-            df["Id"] = range(1, len(df) + 1)
-            df["Name"] = ""
-            df["Date of interaction"] = df["Date"]
-            df["AHT (seconds)"] = ""
-            df["Agent"] = df["Name of Call Centre Officer"] = df["Agent"]
-            df["Type of caller"] = ""
-            df["Name of caller"] = ""
-            df["Caller's phone number"] = ""
-            df["Caller's organization/Name of facility"] = ""
-            df["Language spoken"] = ""
-            df["Purpose of call"] = ""
-            df["Did CCO open the call using the appropriate greetings?"] = ""
-            df["Was the CCO able to identify and verify the needs of the customer?"] = ""
-            df["Was the CCO able to educate & inform the customer about the query/enquiry/request"] = ""
-            df["Did the CCO ensure and confirm the necessary steps to query resolution?"] = ""
-            df["Did the CCO accept responsibility for the query? (CAN DO)"] = ""
-            df["Did the CCO speak clearly and fluently throughout the call?"] = ""
-            df["Was the CCO professional?"] = ""
-            df["Was the CCO able to communicate effectively through effective listening and troubleshooting?"] = ""
-            df["Was the CCO polite & courteous?"] = ""
-            df["Did the CCO show empathy? (introduce solution statement)"] = ""
-            df["Did the CCO ask if you had any further needs?"] = ""
-            df["Did the CCO end the call politely and professionally?"] = ""
-            df["Total Score"] = 0
-            df["Fatal"] = ""
-            df["QA Score"] = 0.0
-            df["Do you have any other comments you would like to share?"] = ""
-    
-            # Choose sampling type
-            if user_role == "auditor":
-                sampling_type = "Pure Random"
-                st.caption("All of your unfinished assigned calls will be loaded for auditing.")
-            else:
-                sampling_type = st.radio("🎯 Sampling Type", ["Pure Random", "Stratified by Agent"])
-            sample_size = len(df) if user_role == "auditor" else st.number_input("🔢 Number of Calls to Audit", min_value=1, value=5)
-    
-            button_label = "📝 Load My Assigned Calls" if user_role == "auditor" else "🎲 Select Random Calls"
-            if st.button(button_label):
-                selected = pd.DataFrame()
-    
-                if sampling_type == "Pure Random":
-                    selected = df.sample(n=min(sample_size, len(df)))
-    
-                elif sampling_type == "Stratified by Agent":
-                    agents = df["Agent"].unique()
-                    total_calls = len(df)
-                    samples_per_agent = {}
-                    total_allocated = 0
-                    for a in agents:
-                        num = len(df[df["Agent"] == a])
-                        proportion = num / total_calls if total_calls > 0 else 0
-                        allocated = round(sample_size * proportion)
-                        if allocated == 0 and num > 0:
-                            allocated = 1
-                        samples_per_agent[a] = min(allocated, num)
-                        total_allocated += samples_per_agent[a]
-    
-                    # If total allocated is less than sample_size, add more to agents with remaining capacity
-                    if total_allocated < sample_size:
-                        remaining = sample_size - total_allocated
-                        agents_sorted = sorted(agents, key=lambda a: len(df[df["Agent"] == a]) - samples_per_agent[a], reverse=True)
-                        for a in agents_sorted:
-                            can_add = len(df[df["Agent"] == a]) - samples_per_agent[a]
-                            if can_add > 0:
-                                add = min(remaining, can_add)
-                                samples_per_agent[a] += add
-                                remaining -= add
-                                if remaining == 0:
-                                    break
-    
-                    for a in agents:
-                        subset = df[df["Agent"] == a]
-                        selected = pd.concat([selected, subset.sample(n=samples_per_agent[a])])
-    
-                # Store selected in session state
-                st.session_state.selected = selected.copy()
+            m = re.search(r"(\d{4}-\d{2}-\d{2})", seg)          # YYYY-MM-DD
+            if m:
+                return m.group(1)
+            m = re.search(r"(\d{8})", seg)                    # YYYYMMDD
+            if m:
+                s = m.group(1)
+                return f"{s[0:4]}-{s[4:6]}-{s[6:8]}"
+            m = re.search(r"(\d{2}-\d{2}-\d{4})", seg)        # DD-MM-YYYY
+            if m:
+                d = m.group(1)
+                day, month, year = d.split("-")
+                return f"{year}-{month}-{day}"
+            return "Unknown"
+
+        df["Date"] = df["Base"].apply(_extract_date_from_base)
+        contact_map = dict(zip(assigned_calls["File_Name"], assigned_calls["Contact"])) if "Contact" in assigned_calls.columns else {}
+        df["Contact"] = df["File_Name"].map(contact_map)
+
+        # Initialize all QA columns with exact names from audit report
+        df["Id"] = range(1, len(df) + 1)
+        df["Name"] = ""
+        df["Date of interaction"] = df["Date"]
+        df["AHT (seconds)"] = ""
+        df["Agent"] = df["Name of Call Centre Officer"] = df["Agent"]
+        df["Type of caller"] = ""
+        df["Name of caller"] = ""
+        df["Caller's phone number"] = ""
+        df["Caller's organization/Name of facility"] = ""
+        df["Language spoken"] = ""
+        df["Purpose of call"] = ""
+        df["Did CCO open the call using the appropriate greetings?"] = ""
+        df["Was the CCO able to identify and verify the needs of the customer?"] = ""
+        df["Was the CCO able to educate & inform the customer about the query/enquiry/request"] = ""
+        df["Did the CCO ensure and confirm the necessary steps to query resolution?"] = ""
+        df["Did the CCO accept responsibility for the query? (CAN DO)"] = ""
+        df["Did the CCO speak clearly and fluently throughout the call?"] = ""
+        df["Was the CCO professional?"] = ""
+        df["Was the CCO able to communicate effectively through effective listening and troubleshooting?"] = ""
+        df["Was the CCO polite & courteous?"] = ""
+        df["Did the CCO show empathy? (introduce solution statement)"] = ""
+        df["Did the CCO ask if you had any further needs?"] = ""
+        df["Did the CCO end the call politely and professionally?"] = ""
+        df["Total Score"] = 0
+        df["Fatal"] = ""
+        df["QA Score"] = 0.0
+        df["Do you have any other comments you would like to share?"] = ""
+
+        # Choose sampling type
+        if user_role == "auditor":
+            sampling_type = "Pure Random"
+            st.caption("All of your unfinished assigned calls will be loaded for auditing.")
+        else:
+            sampling_type = st.radio("🎯 Sampling Type", ["Pure Random", "Stratified by Agent"])
+        sample_size = len(df) if user_role == "auditor" else st.number_input("🔢 Number of Calls to Audit", min_value=1, value=5)
+
+        button_label = "📝 Load My Assigned Calls" if user_role == "auditor" else "🎲 Select Random Calls"
+        if st.button(button_label):
+            selected = pd.DataFrame()
+
+            if sampling_type == "Pure Random":
+                selected = df.sample(n=min(sample_size, len(df)))
+
+            elif sampling_type == "Stratified by Agent":
+                agents = df["Agent"].unique()
+                total_calls = len(df)
+                samples_per_agent = {}
+                total_allocated = 0
+                for a in agents:
+                    num = len(df[df["Agent"] == a])
+                    proportion = num / total_calls if total_calls > 0 else 0
+                    allocated = round(sample_size * proportion)
+                    if allocated == 0 and num > 0:
+                        allocated = 1
+                    samples_per_agent[a] = min(allocated, num)
+                    total_allocated += samples_per_agent[a]
+
+                # If total allocated is less than sample_size, add more to agents with remaining capacity
+                if total_allocated < sample_size:
+                    remaining = sample_size - total_allocated
+                    agents_sorted = sorted(agents, key=lambda a: len(df[df["Agent"] == a]) - samples_per_agent[a], reverse=True)
+                    for a in agents_sorted:
+                        can_add = len(df[df["Agent"] == a]) - samples_per_agent[a]
+                        if can_add > 0:
+                            add = min(remaining, can_add)
+                            samples_per_agent[a] += add
+                            remaining -= add
+                            if remaining == 0:
+                                break
+
+                for a in agents:
+                    subset = df[df["Agent"] == a]
+                    selected = pd.concat([selected, subset.sample(n=samples_per_agent[a])])
+
+            # Store selected in session state
+            st.session_state.selected = selected.copy()
     
             # Display selections if available
             if 'selected' in st.session_state:
@@ -657,6 +659,41 @@ elif app_mode == "🛠️ Tool":
                         st.session_state[f"fatal_{i}"] = selected.at[i, 'Fatal'] if selected.at[i, 'Fatal'] else ''
                     if f"comments_{i}" not in st.session_state:
                         st.session_state[f"comments_{i}"] = selected.at[i, 'Do you have any other comments you would like to share?'] if selected.at[i, 'Do you have any other comments you would like to share?'] else ''
+
+                if st.button("🧪 Auto-fill Dummy Test Data"):
+                    dummy_scores = {
+                        "Did CCO open the call using the appropriate greetings?": "3",
+                        "Was the CCO able to identify and verify the needs of the customer?": "4",
+                        "Was the CCO able to educate & inform the customer about the query/enquiry/request": "15",
+                        "Did the CCO ensure and confirm the necessary steps to query resolution?": "5",
+                        "Did the CCO accept responsibility for the query? (CAN DO)": "5",
+                        "Did the CCO speak clearly and fluently throughout the call?": "5",
+                        "Was the CCO professional?": "15",
+                        "Was the CCO able to communicate effectively through effective listening and troubleshooting?": "15",
+                        "Was the CCO polite & courteous?": "10",
+                        "Did the CCO show empathy? (introduce solution statement)": "15",
+                        "Did the CCO ask if you had any further needs?": "5",
+                        "Did the CCO end the call politely and professionally?": "3"
+                    }
+
+                    for idx, i in enumerate(selected.index, start=1):
+                        st.session_state[f"name_{i}"] = f"Dummy Auditor {idx}"
+                        st.session_state[f"aht_{i}"] = 180
+                        st.session_state[f"caller_type_{i}"] = ""
+                        st.session_state[f"caller_name_{i}"] = f"Caller {idx}"
+                        st.session_state[f"cc_officer's_name_{i}"] = selected.at[i, 'Agent'] if 'Agent' in selected.columns else ""
+                        st.session_state[f"caller_phone_{i}"] = f"+23355599{idx:04d}"
+                        st.session_state[f"caller_org_{i}"] = f"Demo Facility {idx}"
+                        st.session_state[f"language_{i}"] = "English"
+                        st.session_state[f"purpose_{i}"] = "Enquiry"
+                        st.session_state[f"fatal_{i}"] = ""
+                        st.session_state[f"comments_{i}"] = f"Dummy QA comment for call {idx}."
+                        st.session_state[f"na_{i}"] = False
+
+                        for q, _ in quality_questions:
+                            st.session_state[f"{q}_{i}"] = dummy_scores.get(q, "0")
+
+                    st.success("Dummy test data loaded for all selected calls. Review and click Save Audit Log.")
     
                 # Collect widget values
                 form_data = {}
@@ -774,7 +811,7 @@ elif app_mode == "🛠️ Tool":
                         selected_save["Audit_Timestamp"] = timestamp
                         filename = f"Audit_log_calls/audit_log_{timestamp}.xlsx"
                         os.makedirs("Audit_log_calls", exist_ok=True)
-                        selected_save.to_excel(filename, index=False)
+                        sanitize_dataframe_for_excel(selected_save).to_excel(filename, index=False)
                         st.success(f"✅ Audit log saved successfully! File: {filename}")
                     except Exception as e:
                         st.error(f"Failed to save audit log: {e}")
@@ -822,6 +859,15 @@ elif app_mode == "🛠️ Tool":
 # DASHBOARD PAGE
 # ============================================
 elif app_mode == "📊 Dashboard":
+    if user_role == "auditor":
+        st.error("Access denied. Only supervisor accounts are allowed on the dashboard.")
+        st.stop()
+
+    if user_role != "supervisor":
+        st.session_state.app_mode = "🏠 Home"
+        st.session_state._sync_app_mode_selector = True
+        st.rerun()
+
     st.title("📊 QA Audit Dashboard")
     
     # Load and combine all audit log files into audit_data
@@ -1233,7 +1279,7 @@ elif app_mode == "📊 Dashboard":
         with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
             # ===== SHEET 1: Main Audit Data =====
             export_cols = [col for col in filtered_data.columns if col not in ['Base', 'Contact']]
-            filtered_data[export_cols].to_excel(writer, sheet_name=month_year, index=False, startrow=4)
+            sanitize_dataframe_for_excel(filtered_data[export_cols]).to_excel(writer, sheet_name=month_year, index=False, startrow=4)
             
             # Format Sheet 1 headers with colors and borders
             ws1 = writer.sheets[month_year]
@@ -1665,13 +1711,14 @@ elif app_mode == "📊 Dashboard":
                 return Title(tx=Text(rich=RichText(p=[para])))
 
             def _style_bar_chart(chart):
-                """Percent scale on the left (Metrics) axis, no gridlines, no per-bar labels/legend."""
-                chart.y_axis.title = 'Metrics'
+                """Use a compact layout with an explicit percentage value axis and no legend."""
+                chart.y_axis.title = 'Score (%)'
                 chart.y_axis.numFmt = '0%'
                 chart.y_axis.scaling.min = 0
                 chart.y_axis.scaling.max = 1
                 chart.y_axis.majorUnit = 0.1
                 chart.y_axis.majorGridlines = None
+                chart.x_axis.title = 'Metrics'
                 chart.x_axis.tickLblPos = "low"
                 chart.x_axis.delete = False
                 chart.legend = None
@@ -1723,8 +1770,8 @@ elif app_mode == "📊 Dashboard":
             cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
             chart1.add_data(data1, titles_from_data=True)
             chart1.set_categories(cats1)
-            chart1.height = 11
-            chart1.width = 42
+            chart1.height = 7.5
+            chart1.width = 18
             chart1.series[0].graphicalProperties.solidFill = CHART1_COLOR
             _style_bar_chart(chart1)
             ws_charts.add_chart(chart1, "D2")
@@ -1755,8 +1802,8 @@ elif app_mode == "📊 Dashboard":
             cats2 = Reference(ws_charts, min_col=1, min_row=chart2_row + 1, max_row=chart2_row + len(intro_conclusion))
             chart2.add_data(data2, titles_from_data=True)
             chart2.set_categories(cats2)
-            chart2.height = 11
-            chart2.width = 18
+            chart2.height = 6.5
+            chart2.width = 11
             chart2.series[0].graphicalProperties.solidFill = CHART2_COLOR
             _style_bar_chart(chart2)
             ws_charts.add_chart(chart2, "D26")
@@ -1787,8 +1834,8 @@ elif app_mode == "📊 Dashboard":
             cats3 = Reference(ws_charts, min_col=1, min_row=chart3_row + 1, max_row=chart3_row + len(problem_solving))
             chart3.add_data(data3, titles_from_data=True)
             chart3.set_categories(cats3)
-            chart3.height = 11
-            chart3.width = 20
+            chart3.height = 6.5
+            chart3.width = 12
             chart3.series[0].graphicalProperties.solidFill = CHART3_COLOR
             _style_bar_chart(chart3)
             ws_charts.add_chart(chart3, "D50")
@@ -1819,8 +1866,8 @@ elif app_mode == "📊 Dashboard":
             cats4 = Reference(ws_charts, min_col=1, min_row=chart4_row + 1, max_row=chart4_row + len(soft_skills))
             chart4.add_data(data4, titles_from_data=True)
             chart4.set_categories(cats4)
-            chart4.height = 11
-            chart4.width = 20
+            chart4.height = 6.5
+            chart4.width = 12
             chart4.series[0].graphicalProperties.solidFill = CHART4_COLOR
             _style_bar_chart(chart4)
             ws_charts.add_chart(chart4, "D74")
@@ -1851,7 +1898,7 @@ elif app_mode == "📊 Dashboard":
 
             # Persist the current unfinished-calls snapshot, auditor name included
             os.makedirs(UNFINISHED_CALLS_DIR, exist_ok=True)
-            unfinished_df.to_excel(UNFINISHED_CALLS_FILE, index=False)
+            sanitize_dataframe_for_excel(unfinished_df).to_excel(UNFINISHED_CALLS_FILE, index=False)
 
             total_by_auditor = all_assignments.groupby('Auditor')['File_Name'].count().rename('Total Assigned Calls')
             unfinished_by_auditor = unfinished_df.groupby('Auditor')['File_Name'].count().rename('Unfinished Calls')

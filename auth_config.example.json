@@ -1,0 +1,19 @@
+{
+  "cookie_name": "qa_audit_platform_session",
+  "cookie_key": "replace-with-a-long-random-secret",
+  "cookie_expiry_days": 1,
+  "users": [
+    {
+      "username": "supervisor@example.com",
+      "name": "Supervisor User",
+      "password_hash": "replace-with-streamlit-authenticator-hash",
+      "role": "supervisor"
+    },
+    {
+      "username": "auditor@example.com",
+      "name": "Auditor User",
+      "password_hash": "replace-with-streamlit-authenticator-hash",
+      "role": "auditor"
+    }
+  ]
+}

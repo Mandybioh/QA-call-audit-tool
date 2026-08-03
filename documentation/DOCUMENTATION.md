@@ -1,5 +1,9 @@
 # QA Call Audit Tool Documentation
 
+## User Manual
+
+For day-to-day user instructions, see USER_MANUAL.md in this folder.
+
 ## Project Overview
 
 This project consists of two main components:

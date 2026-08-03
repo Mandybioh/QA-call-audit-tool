@@ -2,7 +2,17 @@
 
 A comprehensive Streamlit application suite for conducting QA audits on audio call recordings with real-time statistics and analytics.
 
+## User Documentation
+
+- End-user manual: USER_MANUAL.md
+- Technical project documentation: QA_Call_Audit_Tool_Documentation.md
+- Production checklist: PRODUCTION_READINESS_CHECKLIST.md
+
 ## 📋 Features
+
+## ✅ Pre-Launch Checklist
+
+Before official use, complete the production checklist in `PRODUCTION_READINESS_CHECKLIST.md`.
 
 ### **tool.py - QA Call Selector**
 - 🎧 Browse and load audio files (MP3, WAV, M4A)
@@ -36,6 +46,15 @@ cd "c:\Users\a.biomarfo\Documents\dashboards\QA call audit tool"
 pip install -r requirements.txt
 ```
 
+### 1.1 Configure Authentication Secrets (Required)
+Generate your local auth config with hashed passwords and a random cookie key:
+
+```powershell
+python bootstrap_auth_config.py --user "supervisor@example.com|Supervisor User|supervisor|StrongPassword1!" --user "auditor@example.com|Auditor User|auditor|StrongPassword2!"
+```
+
+This creates `auth_config.json` in the project root. The file is git-ignored.
+
 ### 2. Run the QA Selector Tool
 ```powershell
 streamlit run tool.py
@@ -55,6 +74,19 @@ Then:
 1. Use filters in the sidebar to explore data
 2. Switch between tabs for different views
 3. Download filtered data as CSV if needed
+
+## 🤖 CI Smoke Test
+
+A GitHub Actions workflow now runs the core workflow smoke test on pushes and pull requests to `main`:
+
+- Workflow file: `.github/workflows/smoke-test.yml`
+- Test script: `smoke_test_core_workflow.py`
+
+Run the same smoke test locally:
+
+```powershell
+python smoke_test_core_workflow.py
+```
 
 ## 📁 File Naming Convention
 

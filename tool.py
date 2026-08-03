@@ -5,24 +5,33 @@ import os, random, pandas as pd
 from datetime import datetime 
 import re
 import plotly.express as px
+import glob
+import io
+from excel_sanitization import sanitize_dataframe_for_excel
 
 # --- User Authentication and RBAC ---
 import streamlit_authenticator as stauth
 
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
+ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
+DEFAULT_CALLS_FOLDER = os.path.join(BASE_DIR, "New call list")
+
 SHARED_COOKIE_NAME = "qa_audit_platform_session"
 SHARED_COOKIE_KEY = "qa_audit_platform_cookie_key_2026_secure"
 
-st.set_page_config(page_title="QA Audio Call Selector", layout="wide")
-
-# Define credentials dictionary for streamlit-authenticator >=0.4.2
 credentials = {
     "usernames": {
         "amanda.bio-marfo@nationwidemh.com": {
             "name": "Amanda Bio-Marfo",
+            "password": stauth.Hasher.hash("012")
+        },
+        "araba.quartey@nationwidemh.com": {
+            "name": "Araba Quartey",
             "password": stauth.Hasher.hash("123")
         },
         "suraiyatu.mohammed@nationwidemh.com": {
-            "name": "Surayatu Mohammed",
+            "name": "Suraiyatu Mohammed",
             "password": stauth.Hasher.hash("456")
         },
         "edem.dzitrie@nationwidemh.com": {
@@ -31,6 +40,8 @@ credentials = {
         }
     }
 }
+
+st.set_page_config(page_title="QA Audio Call Selector", layout="wide")
 
 cookie_manager = CookieManager(key="qa_app_tool_cookie_manager")
 
@@ -51,9 +62,9 @@ authentication_status = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
 
 def get_user_role(username):
-    # Example static mapping; replace with DB lookup as needed
     role_map = {
         "amanda.bio-marfo@nationwidemh.com": "admin",
+        "araba.quartey@nationwidemh.com": "auditor",
         "suraiyatu.mohammed@nationwidemh.com": "auditor",
         "edem.dzitrie@nationwidemh.com": "supervisor"
     }
@@ -107,9 +118,9 @@ authentication_status = st.session_state.get("authentication_status")
 username = st.session_state.get("username")
 
 def get_user_role(username):
-    # Example static mapping; replace with DB lookup as needed
     role_map = {
         "amanda.bio-marfo@nationwidemh.com": "admin",
+        "araba.quartey@nationwidemh.com": "auditor",
         "suraiyatu.mohammed@nationwidemh.com": "auditor",
         "edem.dzitrie@nationwidemh.com": "supervisor"
     }
@@ -158,7 +169,7 @@ def save_assignments(new_rows_df):
     """Append new_rows_df to the persisted assignment history and save."""
     os.makedirs(ASSIGNMENTS_DIR, exist_ok=True)
     combined = pd.concat([load_existing_assignments(), new_rows_df], ignore_index=True)
-    combined.to_excel(ASSIGNMENTS_FILE, index=False)
+    sanitize_dataframe_for_excel(combined).to_excel(ASSIGNMENTS_FILE, index=False)
     return combined
 
 def show_admin_panel():
@@ -276,7 +287,7 @@ def show_approval_dashboard(supervisor_name, supervisor_username):
         st.dataframe(st.session_state["latest_assignments"], use_container_width=True, hide_index=True)
 
         excel_buffer = io.BytesIO()
-        st.session_state["latest_assignments"].to_excel(excel_buffer, index=False)
+        sanitize_dataframe_for_excel(st.session_state["latest_assignments"]).to_excel(excel_buffer, index=False)
         excel_buffer.seek(0)
         st.download_button(
             "⬇️ Download This Batch (Excel)",
@@ -679,7 +690,7 @@ if folder_path and os.path.isdir(folder_path):
                     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                     selected_save["Audit_Timestamp"] = timestamp
                     filename = f"audit_log_{timestamp}.xlsx"
-                    selected_save.to_excel(filename, index=False)
+                    sanitize_dataframe_for_excel(selected_save).to_excel(filename, index=False)
                     st.success(f"Audit selections saved successfully! File: {filename}")
                 except Exception as e:
                     st.error(f"Failed to save audit log: {e}")
