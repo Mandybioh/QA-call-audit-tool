@@ -155,7 +155,34 @@ If you need help:
 2. Note the time and your username.
 3. Share the details with your supervisor or platform admin.
 
+## 12. Performance Test Checklist
+
+Use this checklist when verifying app efficiency before production or after major changes.
+
+|Test Area|Steps|Target|Actual|Pass/Fail|Notes|
+|---|---|---|---|---|---|
+|Tool load time|Open Tool from Home and wait until controls are usable.|<= 3 sec||||
+|Auto-fill speed|Select calls, click Auto-fill Dummy Test Data, wait for success message.|<= 2 sec for 20 calls||||
+|Save audit speed|Click Save Audit Log after auto-fill and wait for success message.|<= 5 sec for 20 calls||||
+|Dashboard load time|Open Dashboard and wait for charts + tabs to render.|<= 5 sec||||
+|Filter response time|Change date/agent/score filters and observe update delay.|<= 2 sec per change||||
+|Export generation time|Export report from Raw Data tab and wait for download readiness.|<= 10 sec||||
+|Multi-user save reliability|Two users save within 1 minute of each other.|No save failure/corruption||||
+|Unfinished calls accuracy|Confirm completed files drop from unfinished list.|100% accurate||||
+
+### 12.1 Recommended Test Volumes
+
+- Small: 10 to 20 selected calls
+- Medium: 50 selected calls
+- Large: 100 selected calls
+
+### 12.2 Minimum Evidence to Keep
+
+- Screenshot of each major test result
+- Exported sample report file
+- Test date, tester name, and environment (local/production)
+
 ---
 
 Version: 1.0  
-Last Updated: 2026-08-03
+Last Updated: 2026-08-04

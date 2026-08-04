@@ -240,15 +240,20 @@ if app_mode == "🏠 Home":
 
         with st.expander("📘 Documentation Updates", expanded=False):
             st.markdown("""
-            **Security and reliability updates now active in this platform:**
+            **Latest platform updates:**
 
             - Excel input sanitization is applied before audit and assignment exports to reduce formula-injection risk.
-            - Authentication no longer uses hardcoded credentials or cookie secrets in app code.
-            - Local authentication is loaded from auth_config.json (kept out of version control).
-            - Use bootstrap_auth_config.py to generate auth_config.json with hashed passwords and a strong cookie key.
+            - Auditor login continues to use the in-app account setup currently configured in the platform.
+            - Logout now returns users to the Home page before login.
+            - Unauthorized auditor access to Dashboard now redirects back to Home without showing an access-denied message.
+            - The dashboard launcher now opens the unified home.py platform first.
             - Core workflow smoke test is available via smoke_test_core_workflow.py.
-            - CI runs the smoke test on push and pull request to main via .github/workflows/smoke-test.yml.
-            - End-user manual is available in documentation/USER_MANUAL.md.
+            - End-user manual is available in documentation/USER_MANUAL.md and documentation/QA_Audit_Platform_User_Manual.docx.
+            - A performance test checklist table is now included in documentation/USER_MANUAL.md.
+            - Selectbox defaults now safely fall back when stored values are invalid, preventing errors like ValueError: '5' is not in list.
+            - Audit save now normalizes dtype targets before assignment, preventing errors like TypeError: Invalid value '0' for dtype 'str'.
+            - Auto-fill dummy test data now updates widget-state keys directly so visible form fields are populated immediately.
+            - Dashboard Excel export has been restored to the full formatted version with color coding and all 5 sheets, including Charts & Summary.
 
             For full operational guidance, see the documentation folder and the Production Readiness Checklist.
             """)
@@ -566,45 +571,49 @@ elif app_mode == "🛠️ Tool":
         sample_size = len(df) if user_role == "auditor" else st.number_input("🔢 Number of Calls to Audit", min_value=1, value=5)
 
         button_label = "📝 Load My Assigned Calls" if user_role == "auditor" else "🎲 Select Random Calls"
-        if st.button(button_label):
+        load_clicked = st.button(button_label)
+        if load_clicked or ('selected' in st.session_state and not st.session_state.selected.empty):
             selected = pd.DataFrame()
 
-            if sampling_type == "Pure Random":
-                selected = df.sample(n=min(sample_size, len(df)))
+            if load_clicked:
+                if sampling_type == "Pure Random":
+                    selected = df.sample(n=min(sample_size, len(df)))
 
-            elif sampling_type == "Stratified by Agent":
-                agents = df["Agent"].unique()
-                total_calls = len(df)
-                samples_per_agent = {}
-                total_allocated = 0
-                for a in agents:
-                    num = len(df[df["Agent"] == a])
-                    proportion = num / total_calls if total_calls > 0 else 0
-                    allocated = round(sample_size * proportion)
-                    if allocated == 0 and num > 0:
-                        allocated = 1
-                    samples_per_agent[a] = min(allocated, num)
-                    total_allocated += samples_per_agent[a]
+                elif sampling_type == "Stratified by Agent":
+                    agents = df["Agent"].unique()
+                    total_calls = len(df)
+                    samples_per_agent = {}
+                    total_allocated = 0
+                    for a in agents:
+                        num = len(df[df["Agent"] == a])
+                        proportion = num / total_calls if total_calls > 0 else 0
+                        allocated = round(sample_size * proportion)
+                        if allocated == 0 and num > 0:
+                            allocated = 1
+                        samples_per_agent[a] = min(allocated, num)
+                        total_allocated += samples_per_agent[a]
 
-                # If total allocated is less than sample_size, add more to agents with remaining capacity
-                if total_allocated < sample_size:
-                    remaining = sample_size - total_allocated
-                    agents_sorted = sorted(agents, key=lambda a: len(df[df["Agent"] == a]) - samples_per_agent[a], reverse=True)
-                    for a in agents_sorted:
-                        can_add = len(df[df["Agent"] == a]) - samples_per_agent[a]
-                        if can_add > 0:
-                            add = min(remaining, can_add)
-                            samples_per_agent[a] += add
-                            remaining -= add
-                            if remaining == 0:
-                                break
+                    # If total allocated is less than sample_size, add more to agents with remaining capacity
+                    if total_allocated < sample_size:
+                        remaining = sample_size - total_allocated
+                        agents_sorted = sorted(agents, key=lambda a: len(df[df["Agent"] == a]) - samples_per_agent[a], reverse=True)
+                        for a in agents_sorted:
+                            can_add = len(df[df["Agent"] == a]) - samples_per_agent[a]
+                            if can_add > 0:
+                                add = min(remaining, can_add)
+                                samples_per_agent[a] += add
+                                remaining -= add
+                                if remaining == 0:
+                                    break
 
-                for a in agents:
-                    subset = df[df["Agent"] == a]
-                    selected = pd.concat([selected, subset.sample(n=samples_per_agent[a])])
+                    for a in agents:
+                        subset = df[df["Agent"] == a]
+                        selected = pd.concat([selected, subset.sample(n=samples_per_agent[a])])
 
-            # Store selected in session state
-            st.session_state.selected = selected.copy()
+                # Store selected in session state only when user clicks to load/select.
+                st.session_state.selected = selected.copy()
+            else:
+                selected = st.session_state.selected.copy()
     
             # Display selections if available
             if 'selected' in st.session_state:
@@ -677,21 +686,51 @@ elif app_mode == "🛠️ Tool":
                     }
 
                     for idx, i in enumerate(selected.index, start=1):
-                        st.session_state[f"name_{i}"] = f"Dummy Auditor {idx}"
-                        st.session_state[f"aht_{i}"] = 180
-                        st.session_state[f"caller_type_{i}"] = ""
-                        st.session_state[f"caller_name_{i}"] = f"Caller {idx}"
-                        st.session_state[f"cc_officer's_name_{i}"] = selected.at[i, 'Agent'] if 'Agent' in selected.columns else ""
-                        st.session_state[f"caller_phone_{i}"] = f"+23355599{idx:04d}"
-                        st.session_state[f"caller_org_{i}"] = f"Demo Facility {idx}"
-                        st.session_state[f"language_{i}"] = "English"
-                        st.session_state[f"purpose_{i}"] = "Enquiry"
+                        dummy_name = f"Dummy Auditor {idx}"
+                        dummy_aht = 180
+                        dummy_caller_type = ""
+                        dummy_caller_name = f"Caller {idx}"
+                        dummy_cc_officer = selected.at[i, 'Agent'] if 'Agent' in selected.columns else ""
+                        dummy_phone = f"+23355599{idx:04d}"
+                        dummy_org = f"Demo Facility {idx}"
+                        dummy_language = "English"
+                        dummy_purpose = "Enquiry"
+                        dummy_comment = f"Dummy QA comment for call {idx}."
+
+                        st.session_state[f"name_{i}"] = dummy_name
+                        st.session_state[f"name_input_{i}"] = dummy_name
+
+                        st.session_state[f"aht_{i}"] = dummy_aht
+                        st.session_state[f"aht_input_{i}"] = dummy_aht
+
+                        st.session_state[f"caller_type_{i}"] = dummy_caller_type
+                        st.session_state[f"caller_name_{i}"] = dummy_caller_name
+                        st.session_state[f"caller_name_input_{i}"] = dummy_caller_name
+
+                        st.session_state[f"cc_officer's_name_{i}"] = dummy_cc_officer
+                        st.session_state[f"cc_officer_name_input_{i}"] = dummy_cc_officer
+
+                        st.session_state[f"caller_phone_{i}"] = dummy_phone
+                        st.session_state[f"caller_phone_input_{i}"] = dummy_phone
+
+                        st.session_state[f"caller_org_{i}"] = dummy_org
+                        st.session_state[f"caller_org_input_{i}"] = dummy_org
+
+                        st.session_state[f"language_{i}"] = dummy_language
+                        st.session_state[f"language_input_{i}"] = dummy_language
+
+                        st.session_state[f"purpose_{i}"] = dummy_purpose
+                        st.session_state[f"purpose_input_{i}"] = dummy_purpose
+
                         st.session_state[f"fatal_{i}"] = ""
-                        st.session_state[f"comments_{i}"] = f"Dummy QA comment for call {idx}."
+                        st.session_state[f"comments_{i}"] = dummy_comment
+                        st.session_state[f"comments_input_{i}"] = dummy_comment
                         st.session_state[f"na_{i}"] = False
 
                         for q, _ in quality_questions:
-                            st.session_state[f"{q}_{i}"] = dummy_scores.get(q, "0")
+                            dummy_score = dummy_scores.get(q, "0")
+                            st.session_state[f"{q}_{i}"] = dummy_score
+                            st.session_state[f"{q}_input_{i}"] = dummy_score
 
                     st.success("Dummy test data loaded for all selected calls. Review and click Save Audit Log.")
     
@@ -714,6 +753,10 @@ elif app_mode == "🛠️ Tool":
                         form_data[f"na_{i}"] = False
     
                     with st.expander("📋 Call Metadata & Caller Info", expanded=True):
+                        def _safe_option_index(options, value):
+                            value_str = str(value) if value is not None else ""
+                            return options.index(value_str) if value_str in options else 0
+
                         col1, col2 = st.columns(2)
                         with col1:
                             form_data[f"name_{i}"] = st.text_input(f"Auditor's Name", value=st.session_state[f"name_{i}"], key=f"name_input_{i}")
@@ -723,8 +766,20 @@ elif app_mode == "🛠️ Tool":
                         with col2:
                             form_data[f"caller_phone_{i}"] = st.text_input(f"Caller Phone", value=st.session_state[f"caller_phone_{i}"], key=f"caller_phone_input_{i}")
                             form_data[f"caller_org_{i}"] = st.text_input(f"Caller Organization", value=st.session_state[f"caller_org_{i}"], key=f"caller_org_input_{i}")
-                            form_data[f"language_{i}"] = st.selectbox(f"Language Spoken", ["", "English", "Twi", "Ga", "Other"], index=["", "English", "Twi", "Ga", "Other"].index(st.session_state[f"language_{i}"] if st.session_state[f"language_{i}"] else ""), key=f"language_input_{i}")
-                            form_data[f"purpose_{i}"] = st.selectbox(f"Purpose of Call", ["", "Complaint", "Enquiry", "Request"], index=["", "Complaint", "Enquiry", "Request"].index(st.session_state[f"purpose_{i}"] if st.session_state[f"purpose_{i}"] else ""), key=f"purpose_input_{i}")
+                            language_options = ["", "English", "Twi", "Ga", "Other"]
+                            purpose_options = ["", "Complaint", "Enquiry", "Request"]
+                            form_data[f"language_{i}"] = st.selectbox(
+                                f"Language Spoken",
+                                language_options,
+                                index=_safe_option_index(language_options, st.session_state[f"language_{i}"]),
+                                key=f"language_input_{i}"
+                            )
+                            form_data[f"purpose_{i}"] = st.selectbox(
+                                f"Purpose of Call",
+                                purpose_options,
+                                index=_safe_option_index(purpose_options, st.session_state[f"purpose_{i}"]),
+                                key=f"purpose_input_{i}"
+                            )
     
                     with st.expander("⭐ Quality Metrics (Rate as Yes/No)", expanded=True):
                         col1, col2 = st.columns(2)
@@ -750,7 +805,7 @@ elif app_mode == "🛠️ Tool":
                                 options = ["", "0", "10", "13", "14", "15", "NA"]
                             else:
                                 options = ["", "0", "1", "2", "3", "NA"]
-                            idx_default = options.index(str(st.session_state[f"{q}_{i}"]) if st.session_state[f"{q}_{i}"] else "")
+                            idx_default = _safe_option_index(options, st.session_state[f"{q}_{i}"])
                             if idx % 2 == 0:
                                 form_data[f"{q}_{i}"] = col1.selectbox(label, options, index=idx_default, key=f"{q}_input_{i}")
                             else:
@@ -766,6 +821,24 @@ elif app_mode == "🛠️ Tool":
     
                     # Update selected from form data
                     selected_save = st.session_state.selected.copy()
+
+                    # Some rows may load with pandas StringDtype; normalize target columns
+                    # before writing numeric form values to avoid dtype assignment errors.
+                    numeric_columns = ["Total Score", "QA Score", "AHT (seconds)"]
+                    text_columns = [
+                        "Not Applicable", "Name", "Type of caller", "Name of caller",
+                        "Caller's phone number", "Caller's organization/Name of facility",
+                        "Language spoken", "Purpose of call",
+                        "Do you have any other comments you would like to share?"
+                    ]
+
+                    for col in numeric_columns:
+                        if col in selected_save.columns:
+                            selected_save[col] = pd.to_numeric(selected_save[col], errors="coerce")
+
+                    for col in text_columns:
+                        if col in selected_save.columns:
+                            selected_save[col] = selected_save[col].astype("object")
     
                     for i in selected_save.index:
                         # If marked as N/A, set a flag and skip scoring/inputs
@@ -860,8 +933,10 @@ elif app_mode == "🛠️ Tool":
 # ============================================
 elif app_mode == "📊 Dashboard":
     if user_role == "auditor":
-        st.error("Access denied. Only supervisor accounts are allowed on the dashboard.")
-        st.stop()
+        st.session_state.app_mode = "🏠 Home"
+        st.session_state.app_mode_selector = "🏠 Home"
+        st.session_state._sync_app_mode_selector = True
+        st.rerun()
 
     if user_role != "supervisor":
         st.session_state.app_mode = "🏠 Home"

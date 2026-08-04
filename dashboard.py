@@ -275,8 +275,23 @@ elif authentication_status is None:
     st.stop()
 
 # If we reach here, user is authenticated
-st.success(f"Welcome {name}")
 user_role = get_user_role(username)
+
+if user_role == "auditor":
+    try:
+        st.switch_page("home.py")
+    except Exception:
+        st.components.v1.html(
+            """
+            <script>
+            window.top.location.href = 'http://localhost:8502/';
+            </script>
+            """,
+            height=0,
+        )
+    st.stop()
+
+st.success(f"Welcome {name}")
 st.sidebar.markdown(f"**Role:** {user_role}")
 authenticator.logout(
     button_name="🚪 Logout",
@@ -284,10 +299,6 @@ authenticator.logout(
     key="dashboard_sidebar_logout_button",
     callback=_post_logout_cleanup
 )
-
-if user_role == "auditor":
-    st.error("Access denied. Only supervisor accounts are allowed on this page.")
-    st.stop()
 
 if user_role != "supervisor":
     st.stop()
@@ -706,6 +717,7 @@ with tab5:
     excel_buffer = io.BytesIO()
     from openpyxl.styles import PatternFill, Font, Alignment, Border, Side
     from openpyxl import load_workbook
+    from openpyxl.drawing.image import Image as XLImage
     from datetime import datetime
     
     # Get current month/year for sheet name
@@ -750,7 +762,107 @@ with tab5:
         # ===== SHEET 1: Main Audit Data =====
         export_cols = [col for col in filtered_data.columns if col not in ['Base', 'Contact']]
         sanitize_dataframe_for_excel(filtered_data[export_cols]).to_excel(writer, sheet_name=month_year, index=False, startrow=4)
-        writer.sheets[month_year].sheet_view.showGridLines = False
+        ws1 = writer.sheets[month_year]
+        ws1.sheet_view.showGridLines = False
+
+        # Add logo to top-left corner of Sheet 1
+        if os.path.exists(logo_path):
+            try:
+                logo_img = XLImage(logo_path)
+                logo_img.width = 120
+                logo_img.height = 60
+                ws1.add_image(logo_img, "A1")
+            except Exception:
+                pass
+
+        # Format Sheet 1 headers with colors and borders
+        for col_idx, _ in enumerate(export_cols, start=1):
+            cell = ws1.cell(row=5, column=col_idx)
+            cell.fill = green_header
+            cell.font = white_font
+            cell.border = thin_border
+            cell.alignment = Alignment(horizontal='center', wrap_text=True)
+
+        # Format Sheet 1 data rows with alternating colors
+        for row_idx in range(6, len(filtered_data) + 6):
+            for col_idx in range(1, len(export_cols) + 1):
+                cell = ws1.cell(row=row_idx, column=col_idx)
+                cell.border = thin_border
+                if row_idx % 2 == 0:
+                    cell.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+
+        # Auto-adjust column widths
+        for col_idx, _ in enumerate(export_cols, start=1):
+            col_letter = chr(64 + col_idx) if col_idx <= 26 else chr(64 + col_idx // 26) + chr(64 + col_idx % 26)
+            ws1.column_dimensions[col_letter].width = 18
+
+        # Add scoring metrics to Sheet 1 (L2:W3)
+        max_scores = [3, 4, 15, 5, 5, 5, 15, 15, 10, 15, 5, 3]
+        for col_idx, score in enumerate(max_scores, start=12):
+            cell = ws1.cell(row=2, column=col_idx, value=score)
+            cell.font = bold_black_font
+            cell.alignment = Alignment(horizontal='center')
+            cell.fill = blue_fill
+            cell.border = thin_border
+
+        # Row 3: Performance percentages for each metric (calculated from AVERAGE/max_score)
+        col_letters = ['L', 'M', 'N', 'O', 'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W']
+        for col_idx, col_letter in enumerate(col_letters, start=12):
+            cell = ws1.cell(row=3, column=col_idx)
+            cell.value = f'=AVERAGE({col_letter}6:{col_letter}85)/{col_letter}2'
+            cell.number_format = '0%'
+            cell.font = bold_black_font
+            cell.alignment = Alignment(horizontal='center')
+            cell.fill = light_green_fill
+            cell.border = thin_border
+
+        # Add column X header (Total Score column)
+        header_cell = ws1.cell(row=5, column=24, value='Total Score')
+        header_cell.fill = green_header
+        header_cell.font = white_font
+        header_cell.border = thin_border
+        header_cell.alignment = Alignment(horizontal='center')
+
+        for row_idx in range(6, len(filtered_data) + 6):
+            formula_cell = ws1.cell(row=row_idx, column=24)
+            formula_cell.value = f'=SUM(IF(L{row_idx}="NA", L$2,IF(L{row_idx}="FATAL", 0, VALUE(L{row_idx}))), IF(M{row_idx}="NA", M$2,IF(M{row_idx}="FATAL", 0, VALUE(M{row_idx}))), IF(N{row_idx}="NA", N$2,IF(N{row_idx}="FATAL", 0, VALUE(N{row_idx}))), IF(O{row_idx}="NA", O$2,IF(O{row_idx}="FATAL", 0, VALUE(O{row_idx}))), IF(P{row_idx}="NA", P$2,IF(P{row_idx}="FATAL", 0, VALUE(P{row_idx}))), IF(Q{row_idx}="NA", Q$2,IF(Q{row_idx}="FATAL", 0, VALUE(Q{row_idx}))), IF(R{row_idx}="NA", R$2,IF(R{row_idx}="FATAL", 0, VALUE(R{row_idx}))), IF(S{row_idx}="NA", S$2,IF(S{row_idx}="FATAL", 0, VALUE(S{row_idx}))), IF(T{row_idx}="NA", T$2,IF(T{row_idx}="FATAL", 0, VALUE(T{row_idx}))), IF(U{row_idx}="NA", U$2,IF(U{row_idx}="FATAL", 0, VALUE(U{row_idx}))),IF(V{row_idx}="NA", V$2,IF(V{row_idx}="FATAL", 0, VALUE(V{row_idx}))), IF(W{row_idx}="NA", W$2,IF(W{row_idx}="FATAL", 0, VALUE(W{row_idx}))))'
+            formula_cell.font = black_font
+            formula_cell.border = thin_border
+            formula_cell.alignment = Alignment(horizontal='center')
+            if row_idx % 2 == 0:
+                formula_cell.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+
+        # Add column Y header (Fatal Flag column)
+        header_cell_y = ws1.cell(row=5, column=25, value='Fatal Flag')
+        header_cell_y.fill = green_header
+        header_cell_y.font = white_font
+        header_cell_y.border = thin_border
+        header_cell_y.alignment = Alignment(horizontal='center')
+
+        for row_idx in range(6, len(filtered_data) + 6):
+            formula_cell_y = ws1.cell(row=row_idx, column=25)
+            formula_cell_y.value = f'=IF(COUNTIF(L{row_idx}:W{row_idx},"Fatal") > 0,"Fatal","-")'
+            formula_cell_y.font = black_font
+            formula_cell_y.border = thin_border
+            formula_cell_y.alignment = Alignment(horizontal='center')
+            if row_idx % 2 == 0:
+                formula_cell_y.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
+
+        # Add column Z header (Score % column)
+        header_cell_z = ws1.cell(row=5, column=26, value='Score %')
+        header_cell_z.fill = green_header
+        header_cell_z.font = white_font
+        header_cell_z.border = thin_border
+        header_cell_z.alignment = Alignment(horizontal='center')
+
+        for row_idx in range(6, len(filtered_data) + 6):
+            formula_cell_z = ws1.cell(row=row_idx, column=26)
+            formula_cell_z.value = f'=IF(Y{row_idx}="Fatal", "0.00%",X{row_idx}/100)'
+            formula_cell_z.font = black_font
+            formula_cell_z.border = thin_border
+            formula_cell_z.alignment = Alignment(horizontal='center')
+            if row_idx % 2 == 0:
+                formula_cell_z.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
 
         # ===== SHEET 2: Individual Performance =====
         if 'QA Score' not in filtered_data.columns:
@@ -904,6 +1016,7 @@ with tab5:
             cell_c = ws_team.cell(row=row_idx, column=3, value=perf)
             cell_c.font = black_font
             cell_c.border = thin_border
+            cell_c.number_format = '0.00%'
         
         # Introduction & Conclusion (F3:G) with borders
         intro_data = [
@@ -918,6 +1031,7 @@ with tab5:
             cell_g = ws_team.cell(row=row_idx, column=7, value=perf)
             cell_g.font = black_font
             cell_g.border = thin_border
+            cell_g.number_format = '0.00%'
         
         # Problem solving (I3:J) with borders
         problem_data = [
@@ -935,6 +1049,7 @@ with tab5:
             cell_j = ws_team.cell(row=row_idx, column=10, value=perf)
             cell_j.font = black_font
             cell_j.border = thin_border
+            cell_j.number_format = '0.00%'
         
         # Soft skills (M3:N) with borders
         soft_data = [
@@ -952,6 +1067,138 @@ with tab5:
             cell_n = ws_team.cell(row=row_idx, column=14, value=perf)
             cell_n.font = black_font
             cell_n.border = thin_border
+            cell_n.number_format = '0.00%'
+
+        # ===== SHEET 5: Charts & Summary =====
+        from openpyxl.chart import BarChart, Reference
+        from openpyxl.chart.title import Title
+        from openpyxl.chart.text import RichText, Text
+        from openpyxl.drawing.text import Paragraph, ParagraphProperties, CharacterProperties, RegularTextRun
+        ws_charts = writer.book.create_sheet('Charts & Summary')
+
+        CHART1_COLOR = "70AD47"
+        CHART2_COLOR = "FFC000"
+        CHART3_COLOR = "5B9BD5"
+        CHART4_COLOR = "ED7D31"
+        chart_month_year = current_date.strftime('%B %Y')
+
+        def _chart_title(text):
+            title_props = CharacterProperties(b=True, u="sng", sz=1400)
+            run = RegularTextRun(rPr=title_props, t=text)
+            para = Paragraph(pPr=ParagraphProperties(defRPr=title_props), r=[run])
+            return Title(tx=Text(rich=RichText(p=[para])))
+
+        def _style_bar_chart(chart):
+            chart.y_axis.title = 'Score (%)'
+            chart.y_axis.numFmt = '0%'
+            chart.y_axis.scaling.min = 0
+            chart.y_axis.scaling.max = 1
+            chart.y_axis.majorUnit = 0.1
+            chart.y_axis.majorGridlines = None
+            chart.x_axis.title = 'Metrics'
+            chart.x_axis.tickLblPos = "low"
+            chart.x_axis.delete = False
+            chart.legend = None
+
+        intro_conclusion = [
+            ('Call opening', metric_performance[0][1]),
+            ('Call closure', metric_performance[1][1])
+        ]
+        problem_solving = [
+            ('Identification of customer needs', metric_performance[2][1]),
+            ('Educate & Inform', metric_performance[3][1]),
+            ('Necessary steps to query resolution', metric_performance[4][1]),
+            ('Initiative', metric_performance[5][1]),
+            ('Identifying further needs', metric_performance[6][1])
+        ]
+        soft_skills = [
+            ('Effective communication', metric_performance[7][1]),
+            ('Professionalism', metric_performance[8][1]),
+            ('Effective listening & troubleshooting', metric_performance[9][1]),
+            ('Politeness & courtesy', metric_performance[10][1]),
+            ('Empathy', metric_performance[11][1])
+        ]
+
+        def _write_section(start_row, title, data, fill_color):
+            ws_charts.cell(row=start_row, column=1, value=title).font = Font(bold=True, size=11)
+            for idx, (metric_name, perf) in enumerate(data, start=start_row + 1):
+                ws_charts.cell(row=idx, column=1, value=metric_name).font = black_font
+                ws_charts.cell(row=idx, column=1).fill = fill_color
+                ws_charts.cell(row=idx, column=1).border = thin_border
+                score_cell = ws_charts.cell(row=idx, column=2, value=perf)
+                score_cell.font = black_font
+                score_cell.number_format = '0.00%'
+                score_cell.border = thin_border
+                if perf >= 0.75:
+                    score_cell.fill = PatternFill(start_color='92D050', end_color='92D050', fill_type='solid')
+                elif perf >= 0.50:
+                    score_cell.fill = PatternFill(start_color='FFC000', end_color='FFC000', fill_type='solid')
+                else:
+                    score_cell.fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
+
+        chart1_row = 2
+        _write_section(chart1_row, 'Overall Performance', metric_performance, PatternFill(fill_type=None))
+
+        chart1 = BarChart()
+        chart1.type = "col"
+        chart1.title = _chart_title(f"Overall Performance - {chart_month_year}")
+        data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
+        cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
+        chart1.add_data(data1, titles_from_data=True)
+        chart1.set_categories(cats1)
+        chart1.height = 7.5
+        chart1.width = 18
+        chart1.series[0].graphicalProperties.solidFill = CHART1_COLOR
+        _style_bar_chart(chart1)
+        ws_charts.add_chart(chart1, "D2")
+
+        chart2_row = chart1_row + len(metric_performance) + 3
+        _write_section(chart2_row, 'Introduction & Conclusion', intro_conclusion, blue_fill)
+        chart2 = BarChart()
+        chart2.type = "col"
+        chart2.title = _chart_title(f"Introduction & Conclusion - {chart_month_year}")
+        data2 = Reference(ws_charts, min_col=2, min_row=chart2_row, max_row=chart2_row + len(intro_conclusion))
+        cats2 = Reference(ws_charts, min_col=1, min_row=chart2_row + 1, max_row=chart2_row + len(intro_conclusion))
+        chart2.add_data(data2, titles_from_data=True)
+        chart2.set_categories(cats2)
+        chart2.height = 6.5
+        chart2.width = 11
+        chart2.series[0].graphicalProperties.solidFill = CHART2_COLOR
+        _style_bar_chart(chart2)
+        ws_charts.add_chart(chart2, "D26")
+
+        chart3_row = chart2_row + len(intro_conclusion) + 3
+        _write_section(chart3_row, 'Problem Solving', problem_solving, light_green_fill)
+        chart3 = BarChart()
+        chart3.type = "col"
+        chart3.title = _chart_title(f"Problem Solving - {chart_month_year}")
+        data3 = Reference(ws_charts, min_col=2, min_row=chart3_row, max_row=chart3_row + len(problem_solving))
+        cats3 = Reference(ws_charts, min_col=1, min_row=chart3_row + 1, max_row=chart3_row + len(problem_solving))
+        chart3.add_data(data3, titles_from_data=True)
+        chart3.set_categories(cats3)
+        chart3.height = 6.5
+        chart3.width = 12
+        chart3.series[0].graphicalProperties.solidFill = CHART3_COLOR
+        _style_bar_chart(chart3)
+        ws_charts.add_chart(chart3, "D50")
+
+        chart4_row = chart3_row + len(problem_solving) + 3
+        _write_section(chart4_row, 'Soft Skills', soft_skills, gold_fill)
+        chart4 = BarChart()
+        chart4.type = "col"
+        chart4.title = _chart_title(f"Soft Skills - {chart_month_year}")
+        data4 = Reference(ws_charts, min_col=2, min_row=chart4_row, max_row=chart4_row + len(soft_skills))
+        cats4 = Reference(ws_charts, min_col=1, min_row=chart4_row + 1, max_row=chart4_row + len(soft_skills))
+        chart4.add_data(data4, titles_from_data=True)
+        chart4.set_categories(cats4)
+        chart4.height = 6.5
+        chart4.width = 12
+        chart4.series[0].graphicalProperties.solidFill = CHART4_COLOR
+        _style_bar_chart(chart4)
+        ws_charts.add_chart(chart4, "D74")
+
+        ws_charts.column_dimensions['A'].width = 40
+        ws_charts.column_dimensions['B'].width = 15
     
     excel_buffer.seek(0)
 
