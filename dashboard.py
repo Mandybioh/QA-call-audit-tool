@@ -204,7 +204,6 @@ def show_approval_dashboard(supervisor_name, supervisor_username):
                 f"Only {len(available)} unassigned call(s) available, but {total_requested} were "
                 "requested. Calls will be distributed as evenly as possible."
             )
-
         pool = available.sample(frac=1).reset_index(drop=True)
         assigned_rows = []
         cursor = 0
@@ -669,14 +668,7 @@ with tab4:
     if len(comments_data) > 0:
         st.subheader(f"Comments ({len(comments_data)} entries)")
 
-        # Filter by score
-        score_filter = st.select_slider(
-            "Filter by Score",
-            options=sorted(comments_data['Total Score'].unique())
-        )
-        comments_filtered = comments_data[comments_data['Total Score'] == score_filter]
-
-        for idx, row in comments_filtered.iterrows():
+        for idx, row in comments_data.iterrows():
             with st.container():
                 col1, col2, col3 = st.columns([1, 1, 3])
                 with col1:
@@ -693,6 +685,13 @@ with tab4:
 # Tab 5: Raw Data
 with tab5:
     st.subheader("Raw Audit Data")
+
+    col_refresh, col_note = st.columns([1, 3])
+    with col_refresh:
+        if st.button("🔄 Refresh Data", key="refresh_dashboard_data"):
+            st.rerun()
+    with col_note:
+        st.caption("Use Refresh Data to reload newly audited calls before exporting.")
 
     # Display key columns
     display_cols = ['Id', 'Name', 'Date of interaction', 'AHT (seconds)', 'Audit_Timestamp', 'Name of Call Centre Officer',
@@ -970,7 +969,7 @@ with tab5:
         cell_c4.border = thin_border
         
         # Row 5: QI Score with borders
-        cell_b5 = ws_trend.cell(row=5, column=2, value='QI Score')
+        cell_b5 = ws_trend.cell(row=5, column=2, value='QA Score')
         cell_b5.font = black_font
         cell_b5.border = thin_border
         
@@ -1071,12 +1070,13 @@ with tab5:
 
         # ===== SHEET 5: Charts & Summary =====
         from openpyxl.chart import BarChart, Reference
+        from openpyxl.chart.label import DataLabelList
         from openpyxl.chart.title import Title
         from openpyxl.chart.text import RichText, Text
         from openpyxl.drawing.text import Paragraph, ParagraphProperties, CharacterProperties, RegularTextRun
         ws_charts = writer.book.create_sheet('Charts & Summary')
 
-        CHART1_COLOR = "70AD47"
+        CHART1_COLOR = "006400"
         CHART2_COLOR = "FFC000"
         CHART3_COLOR = "5B9BD5"
         CHART4_COLOR = "ED7D31"
@@ -1089,16 +1089,19 @@ with tab5:
             return Title(tx=Text(rich=RichText(p=[para])))
 
         def _style_bar_chart(chart):
-            chart.y_axis.title = 'Score (%)'
+            chart.y_axis.title = 'Performance %'
             chart.y_axis.numFmt = '0%'
             chart.y_axis.scaling.min = 0
             chart.y_axis.scaling.max = 1
-            chart.y_axis.majorUnit = 0.1
-            chart.y_axis.majorGridlines = None
+            chart.y_axis.majorUnit = 0.2
             chart.x_axis.title = 'Metrics'
             chart.x_axis.tickLblPos = "low"
             chart.x_axis.delete = False
             chart.legend = None
+            chart.dataLabels = DataLabelList()
+            chart.dataLabels.showVal = True
+            chart.dataLabels.position = "outEnd"
+            chart.dataLabels.numFmt = '0%'
 
         intro_conclusion = [
             ('Call opening', metric_performance[0][1]),
@@ -1136,23 +1139,38 @@ with tab5:
                 else:
                     score_cell.fill = PatternFill(start_color='FF6B6B', end_color='FF6B6B', fill_type='solid')
 
+        overall_performance_sorted = sorted(metric_performance, key=lambda x: x[1], reverse=True)
         chart1_row = 2
-        _write_section(chart1_row, 'Overall Performance', metric_performance, PatternFill(fill_type=None))
+        _write_section(chart1_row, 'Overall Performance', overall_performance_sorted, PatternFill(fill_type=None))
 
         chart1 = BarChart()
         chart1.type = "col"
+        chart1.style = 10
         chart1.title = _chart_title(f"Overall Performance - {chart_month_year}")
-        data1 = Reference(ws_charts, min_col=2, min_row=chart1_row, max_row=len(metric_performance) + chart1_row)
-        cats1 = Reference(ws_charts, min_col=1, min_row=chart1_row + 1, max_row=len(metric_performance) + chart1_row)
+        chart1.title.tx.rich.p[0].r[0].rPr.sz = 2400
+
+        num_rows = len(overall_performance_sorted)
+        data1 = Reference(
+            ws_charts,
+            min_col=2,
+            min_row=chart1_row,
+            max_row=chart1_row + num_rows
+        )
+        cats1 = Reference(
+            ws_charts,
+            min_col=1,
+            min_row=chart1_row + 1,
+            max_row=chart1_row + num_rows
+        )
         chart1.add_data(data1, titles_from_data=True)
         chart1.set_categories(cats1)
-        chart1.height = 7.5
-        chart1.width = 18
+        chart1.height = 6.5
+        chart1.width = 12
         chart1.series[0].graphicalProperties.solidFill = CHART1_COLOR
         _style_bar_chart(chart1)
         ws_charts.add_chart(chart1, "D2")
 
-        chart2_row = chart1_row + len(metric_performance) + 3
+        chart2_row = chart1_row + len(overall_performance_sorted) + 3
         _write_section(chart2_row, 'Introduction & Conclusion', intro_conclusion, blue_fill)
         chart2 = BarChart()
         chart2.type = "col"
@@ -1162,10 +1180,10 @@ with tab5:
         chart2.add_data(data2, titles_from_data=True)
         chart2.set_categories(cats2)
         chart2.height = 6.5
-        chart2.width = 11
+        chart2.width = 12
         chart2.series[0].graphicalProperties.solidFill = CHART2_COLOR
         _style_bar_chart(chart2)
-        ws_charts.add_chart(chart2, "D26")
+        ws_charts.add_chart(chart2, "D20")
 
         chart3_row = chart2_row + len(intro_conclusion) + 3
         _write_section(chart3_row, 'Problem Solving', problem_solving, light_green_fill)
@@ -1180,7 +1198,7 @@ with tab5:
         chart3.width = 12
         chart3.series[0].graphicalProperties.solidFill = CHART3_COLOR
         _style_bar_chart(chart3)
-        ws_charts.add_chart(chart3, "D50")
+        ws_charts.add_chart(chart3, "P2")
 
         chart4_row = chart3_row + len(problem_solving) + 3
         _write_section(chart4_row, 'Soft Skills', soft_skills, gold_fill)
@@ -1195,7 +1213,7 @@ with tab5:
         chart4.width = 12
         chart4.series[0].graphicalProperties.solidFill = CHART4_COLOR
         _style_bar_chart(chart4)
-        ws_charts.add_chart(chart4, "D74")
+        ws_charts.add_chart(chart4, "P20")
 
         ws_charts.column_dimensions['A'].width = 40
         ws_charts.column_dimensions['B'].width = 15
