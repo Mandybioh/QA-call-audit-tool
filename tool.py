@@ -15,7 +15,7 @@ import streamlit_authenticator as stauth
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
-DEFAULT_CALLS_FOLDER = os.path.join(BASE_DIR, "New call list")
+DEFAULT_CALLS_FOLDER = r"F:\Programimg projects\QA call audit tool\recorded calls"
 
 SHARED_COOKIE_NAME = "qa_audit_platform_session"
 SHARED_COOKIE_KEY = "qa_audit_platform_cookie_key_2026_secure"
@@ -579,7 +579,7 @@ if folder_path and os.path.isdir(folder_path):
             for i, row in selected.iterrows():
                 st.write(f"## 🎙️ Call {i+1}: {row['File_Name']}")
                 st.write(f"**Agent:** {row['Agent']} | **Date:** {row['Date']}")
-                st.audio(row["Contact"])
+                render_audio_player(row["Contact"], label=row["File_Name"])
 
                 # Cancel button for Not Applicable (N/A)
                 if st.button(f"Cancel (N/A) for Call {i+1}", key=f"cancel_na_{i}"):

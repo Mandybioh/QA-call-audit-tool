@@ -8,13 +8,14 @@ import glob
 import io
 import re
 from excel_sanitization import sanitize_dataframe_for_excel
+from audio_utils import render_audio_player
 
 st.set_page_config(page_title="QA Audit Dashboard", layout="wide")
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
-DEFAULT_CALLS_FOLDER = os.path.join(BASE_DIR, "New call list")
+DEFAULT_CALLS_FOLDER = r"F:\Programimg projects\QA call audit tool\recorded calls"
 UNFINISHED_CALLS_DIR = os.path.join(BASE_DIR, "unfinished calls")
 UNFINISHED_CALLS_FILE = os.path.join(UNFINISHED_CALLS_DIR, "unfinished_calls.xlsx")
 
@@ -322,15 +323,50 @@ if not dfs:
     st.stop()
 audit_data = pd.concat(dfs, ignore_index=True)
 
+# Normalize and keep only rows that represent actual audited calls.
+def _normalize_audit_data(df: pd.DataFrame) -> pd.DataFrame:
+    normalized = df.copy()
+
+    if 'Audit_Timestamp' in normalized.columns:
+        normalized['Audit_Timestamp'] = pd.to_datetime(normalized['Audit_Timestamp'], errors='coerce')
+    if 'Date of interaction' in normalized.columns:
+        normalized['Date of interaction'] = pd.to_datetime(normalized['Date of interaction'], errors='coerce')
+
+    if 'Agent' not in normalized.columns and 'Name of Call Centre Officer' in normalized.columns:
+        normalized['Agent'] = normalized['Name of Call Centre Officer']
+    elif 'Agent' in normalized.columns and 'Name of Call Centre Officer' not in normalized.columns:
+        normalized['Name of Call Centre Officer'] = normalized['Agent']
+
+    normalized['Agent'] = normalized['Agent'].fillna('Unknown').astype(str)
+    normalized['Name of Call Centre Officer'] = normalized['Name of Call Centre Officer'].fillna(normalized['Agent']).astype(str)
+
+    if 'Total Score' in normalized.columns:
+        normalized['Total Score'] = pd.to_numeric(normalized['Total Score'], errors='coerce')
+    if 'QA Score' in normalized.columns:
+        normalized['QA Score'] = pd.to_numeric(normalized['QA Score'], errors='coerce')
+
+    comments_col = 'Do you have any other comments you would like to share?'
+    if comments_col in normalized.columns:
+        normalized[comments_col] = normalized[comments_col].fillna('').astype(str)
+    else:
+        normalized[comments_col] = ''
+
+    if 'Audit_Timestamp' in normalized.columns:
+        normalized = normalized[normalized['Audit_Timestamp'].notna()].copy()
+
+    return normalized
+
+audit_data = _normalize_audit_data(audit_data)
+
 st.title("📊 QA Audit Dashboard")
 
 # Date range filter setup (must come after audit_data is defined)
 
-# Try to infer a consistent datetime format for 'Audit_Timestamp' to avoid the warning
+# Build a single timeline reference from the normalized data.
 if 'Audit_Timestamp' in audit_data.columns:
-    ts = pd.to_datetime(audit_data['Audit_Timestamp'], format="%d/%m/%Y %H:%M", errors='coerce')
+    ts = audit_data['Audit_Timestamp']
 elif 'Date of interaction' in audit_data.columns:
-    ts = pd.to_datetime(audit_data['Date of interaction'], format="%d/%m/%Y %H:%M", errors='coerce')
+    ts = audit_data['Date of interaction']
 else:
     ts = None
 
@@ -358,11 +394,14 @@ if ts is not None and isinstance(date_range, (list, tuple)) and len(date_range) 
 # ...existing code...
 
 
-# Standardize agent column for consistency
+# Re-apply the same normalized agent field after filtering.
 if 'Agent' not in filtered_data.columns and 'Name of Call Centre Officer' in filtered_data.columns:
     filtered_data['Agent'] = filtered_data['Name of Call Centre Officer']
 elif 'Agent' in filtered_data.columns and 'Name of Call Centre Officer' not in filtered_data.columns:
     filtered_data['Name of Call Centre Officer'] = filtered_data['Agent']
+
+filtered_data['Agent'] = filtered_data['Agent'].fillna('Unknown').astype(str)
+filtered_data['Name of Call Centre Officer'] = filtered_data['Name of Call Centre Officer'].fillna(filtered_data['Agent']).astype(str)
 
 # Agent filter
 agents = sorted(filtered_data['Agent'].dropna().unique())
@@ -399,7 +438,7 @@ if 'Total Score' in filtered_data.columns and filtered_data['Total Score'].notna
 else:
     st.sidebar.info("No scores available for range filter.")
 
-st.sidebar.write(f"📌 Showing {len(filtered_data)} records")
+st.sidebar.write(f"📌 Showing {len(filtered_data)} audited records")
 
 # Main metrics
 col1, col2, col3, col4 = st.columns(4)

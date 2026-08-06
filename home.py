@@ -9,6 +9,7 @@ import io
 import re
 from extra_streamlit_components import CookieManager
 from excel_sanitization import sanitize_dataframe_for_excel
+from audio_utils import render_audio_player
 
 st.set_page_config(page_title="QA Audit Platform", layout="wide")
 
@@ -16,7 +17,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "Logos", "logo.png")
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
-DEFAULT_CALLS_FOLDER = os.path.join(BASE_DIR, "New call list")
+DEFAULT_CALLS_FOLDER = r"F:\Programimg projects\QA call audit tool\recorded calls"
 UNFINISHED_CALLS_DIR = os.path.join(BASE_DIR, "unfinished calls")
 UNFINISHED_CALLS_FILE = os.path.join(UNFINISHED_CALLS_DIR, "unfinished_calls.xlsx")
 
@@ -162,13 +163,14 @@ if os.path.exists(LOGO_PATH):
 
 # User role
 user_role = get_user_role(username)
+is_full_access_user = user_role in ["admin", "supervisor"]
 auditor_can_access_tool = user_role != "auditor" or auditor_has_assigned_calls(username)
 
 # Navigation menu
 st.sidebar.title("📋 Navigation")
 
 allowed_views = ["🏠 Home", "🛠️ Tool"]
-if user_role == "supervisor":
+if is_full_access_user:
     allowed_views.append("📊 Dashboard")
 
 if st.session_state.app_mode not in allowed_views:
@@ -212,7 +214,7 @@ if app_mode == "🏠 Home":
     st.title("🏠 QA Audit Platform")
     st.markdown("---")
 
-    if user_role == "supervisor":
+    if is_full_access_user:
         col1, col2, col3 = st.columns(3)
 
         with col1:
@@ -303,7 +305,7 @@ elif app_mode == "🛠️ Tool":
         st.warning("You will get access to this page once a supervisor assigns calls to your account.")
         st.stop()
 
-    if user_role == "supervisor":
+    if is_full_access_user:
         st.header("🗂️ Supervisor Dashboard — Call Assignment")
 
         auditors = get_auditor_users()
@@ -739,7 +741,7 @@ elif app_mode == "🛠️ Tool":
                 for i, row in selected.iterrows():
                     st.write(f"## 🎙️ Call {i+1}: {row['File_Name']}")
                     st.write(f"**Agent:** {row['Agent']} | **Date:** {row['Date']}")
-                    st.audio(row["Contact"])
+                    render_audio_player(row["Contact"], label=row["File_Name"])
     
                     # Cancel button for Not Applicable (N/A)
                     if st.button(f"Cancel (N/A) for Call {i+1}", key=f"cancel_na_{i}"):
@@ -938,7 +940,7 @@ elif app_mode == "📊 Dashboard":
         st.session_state._sync_app_mode_selector = True
         st.rerun()
 
-    if user_role != "supervisor":
+    if not is_full_access_user:
         st.session_state.app_mode = "🏠 Home"
         st.session_state._sync_app_mode_selector = True
         st.rerun()
