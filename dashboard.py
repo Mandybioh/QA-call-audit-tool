@@ -15,6 +15,7 @@ st.set_page_config(page_title="QA Audit Dashboard", layout="wide")
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
+AUDIT_LOG_DIR = os.path.join(BASE_DIR, "Audit_log_calls")
 DEFAULT_CALLS_FOLDER = r"F:\Programimg projects\QA call audit tool\recorded calls"
 UNFINISHED_CALLS_DIR = os.path.join(BASE_DIR, "unfinished calls")
 UNFINISHED_CALLS_FILE = os.path.join(UNFINISHED_CALLS_DIR, "unfinished_calls.xlsx")
@@ -306,22 +307,34 @@ if user_role != "supervisor":
 if user_role == "supervisor":
     show_approval_dashboard(name, username)
 
-# Load and combine all audit log files into audit_data
-audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
+# Load the latest audit log file as the dashboard source of truth.
+# This prevents older audit runs from continuing to appear in the current dashboard view.
+if os.path.exists(AUDIT_LOG_DIR):
+    audit_files = sorted(glob.glob(os.path.join(AUDIT_LOG_DIR, "audit_log_*.xlsx")), key=os.path.getmtime, reverse=True)
+else:
+    audit_files = []
+
 if not audit_files:
     st.error("No audit log files found. Please ensure audit_log_*.xlsx files are present.")
     st.stop()
-dfs = []
+
+latest_audit_file = None
+latest_audit_df = None
 for file in audit_files:
     try:
-        df = pd.read_excel(file)
-        dfs.append(df)
+        latest_audit_df = pd.read_excel(file)
+        latest_audit_file = file
+        break
     except Exception as e:
         st.warning(f"Could not read {file}: {e}")
-if not dfs:
+
+if latest_audit_df is None or latest_audit_df.empty:
     st.error("No valid audit log data loaded.")
     st.stop()
-audit_data = pd.concat(dfs, ignore_index=True)
+
+audit_data = latest_audit_df.copy()
+if latest_audit_file:
+    st.caption(f"Showing data from the latest audit log: {os.path.basename(latest_audit_file)}")
 
 # Normalize and keep only rows that represent actual audited calls.
 def _normalize_audit_data(df: pd.DataFrame) -> pd.DataFrame:
@@ -459,7 +472,7 @@ with col4:
     st.metric("💬 Comments Provided", comments_count)
 
 # Tabs for different views
-tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
+tabs = st.tabs([
     "📈 Overview",
     "👥 Agent Performance",
     "📅 Timeline",
@@ -467,6 +480,12 @@ tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs([
     "🗂️ Raw Data",
     "🕒 Unfinished Calls"
 ])
+tab1 = tabs[0]
+tab2 = tabs[1]
+tab3 = tabs[2]
+tab4 = tabs[3]
+tab5 = tabs[4]
+tab6 = tabs[5]
 
 with tab1:
     col1, col2 = st.columns(2)
@@ -688,38 +707,48 @@ with tab3:
 # Tab 4: Comments
 with tab4:
     comments_col = 'Do you have any other comments you would like to share?'
-    # Robustly select columns for comments display
+
     base_cols = ['Name of Call Centre Officer', 'Total Score', 'QA Score', comments_col]
-    # Try to include File_Name or fallback to another column if present
     file_col = None
     for candidate in ['File_Name', 'File Name', 'filename', 'File', 'Base']:
         if candidate in filtered_data.columns:
             file_col = candidate
             break
+
     display_cols = base_cols.copy()
     if file_col:
         display_cols.insert(0, file_col)
-    # Only keep columns that exist
     display_cols = [col for col in display_cols if col in filtered_data.columns]
+
     comments_data = filtered_data[
         filtered_data[comments_col].str.strip() != ''
     ][display_cols].copy()
-    if len(comments_data) > 0:
-        st.subheader(f"Comments ({len(comments_data)} entries)")
 
-        for idx, row in comments_data.iterrows():
-            with st.container():
-                col1, col2, col3 = st.columns([1, 1, 3])
-                with col1:
-                    st.write(f"**Score:** {row['Total Score']}/100")
-                with col2:
-                    st.write(f"**Agent:** {row['Name of Call Centre Officer']}")
-                with col3:
-                    st.write(f"**File:** {row[file_col] if file_col and file_col in row else 'N/A'}")
-                st.info(f"{row[comments_col]}")
-                st.divider()
-    else:
-        st.info("No comments found for the selected filters.")
+    if comments_col in comments_data.columns:
+        comments_data[comments_col] = comments_data[comments_col].fillna('').astype(str)
+
+    comments_count = int(comments_data.shape[0])
+
+    st.subheader("Comments Summary")
+    col_count, col_download = st.columns([2, 1])
+
+    with col_count:
+        st.metric("📝 Total Comments Written", comments_count)
+
+    with col_download:
+        if comments_count > 0:
+            comments_excel = io.BytesIO()
+            sanitize_dataframe_for_excel(comments_data).to_excel(comments_excel, index=False)
+            comments_excel.seek(0)
+            st.download_button(
+                label="⬇️ Download Comments Excel",
+                data=comments_excel,
+                file_name=f"comments_{datetime.now().strftime('%Y-%m-%d_%H-%M-%S')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="download_comments_excel"
+            )
+        else:
+            st.info("No comments found for the selected filters.")
 
 # Tab 5: Raw Data
 with tab5:
@@ -799,7 +828,9 @@ with tab5:
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         # ===== SHEET 1: Main Audit Data =====
         export_cols = [col for col in filtered_data.columns if col not in ['Base', 'Contact']]
-        sanitize_dataframe_for_excel(filtered_data[export_cols]).to_excel(writer, sheet_name=month_year, index=False, startrow=4)
+        export_df = filtered_data[export_cols].copy()
+        export_df = export_df.reset_index(drop=True)
+        sanitize_dataframe_for_excel(export_df).to_excel(writer, sheet_name=month_year, index=False, startrow=4)
         ws1 = writer.sheets[month_year]
         ws1.sheet_view.showGridLines = False
 
@@ -821,8 +852,8 @@ with tab5:
             cell.border = thin_border
             cell.alignment = Alignment(horizontal='center', wrap_text=True)
 
-        # Format Sheet 1 data rows with alternating colors
-        for row_idx in range(6, len(filtered_data) + 6):
+            # Format Sheet 1 data rows with alternating colors
+        for row_idx in range(6, len(export_df) + 6):
             for col_idx in range(1, len(export_cols) + 1):
                 cell = ws1.cell(row=row_idx, column=col_idx)
                 cell.border = thin_border
@@ -861,7 +892,7 @@ with tab5:
         header_cell.border = thin_border
         header_cell.alignment = Alignment(horizontal='center')
 
-        for row_idx in range(6, len(filtered_data) + 6):
+        for row_idx in range(6, len(export_df) + 6):
             formula_cell = ws1.cell(row=row_idx, column=24)
             formula_cell.value = f'=SUM(IF(L{row_idx}="NA", L$2,IF(L{row_idx}="FATAL", 0, VALUE(L{row_idx}))), IF(M{row_idx}="NA", M$2,IF(M{row_idx}="FATAL", 0, VALUE(M{row_idx}))), IF(N{row_idx}="NA", N$2,IF(N{row_idx}="FATAL", 0, VALUE(N{row_idx}))), IF(O{row_idx}="NA", O$2,IF(O{row_idx}="FATAL", 0, VALUE(O{row_idx}))), IF(P{row_idx}="NA", P$2,IF(P{row_idx}="FATAL", 0, VALUE(P{row_idx}))), IF(Q{row_idx}="NA", Q$2,IF(Q{row_idx}="FATAL", 0, VALUE(Q{row_idx}))), IF(R{row_idx}="NA", R$2,IF(R{row_idx}="FATAL", 0, VALUE(R{row_idx}))), IF(S{row_idx}="NA", S$2,IF(S{row_idx}="FATAL", 0, VALUE(S{row_idx}))), IF(T{row_idx}="NA", T$2,IF(T{row_idx}="FATAL", 0, VALUE(T{row_idx}))), IF(U{row_idx}="NA", U$2,IF(U{row_idx}="FATAL", 0, VALUE(U{row_idx}))),IF(V{row_idx}="NA", V$2,IF(V{row_idx}="FATAL", 0, VALUE(V{row_idx}))), IF(W{row_idx}="NA", W$2,IF(W{row_idx}="FATAL", 0, VALUE(W{row_idx}))))'
             formula_cell.font = black_font
@@ -877,7 +908,7 @@ with tab5:
         header_cell_y.border = thin_border
         header_cell_y.alignment = Alignment(horizontal='center')
 
-        for row_idx in range(6, len(filtered_data) + 6):
+        for row_idx in range(6, len(export_df) + 6):
             formula_cell_y = ws1.cell(row=row_idx, column=25)
             formula_cell_y.value = f'=IF(COUNTIF(L{row_idx}:W{row_idx},"Fatal") > 0,"Fatal","-")'
             formula_cell_y.font = black_font
@@ -893,7 +924,7 @@ with tab5:
         header_cell_z.border = thin_border
         header_cell_z.alignment = Alignment(horizontal='center')
 
-        for row_idx in range(6, len(filtered_data) + 6):
+        for row_idx in range(6, len(export_df) + 6):
             formula_cell_z = ws1.cell(row=row_idx, column=26)
             formula_cell_z.value = f'=IF(Y{row_idx}="Fatal", "0.00%",X{row_idx}/100)'
             formula_cell_z.font = black_font
@@ -903,10 +934,10 @@ with tab5:
                 formula_cell_z.fill = PatternFill(start_color='F2F2F2', end_color='F2F2F2', fill_type='solid')
 
         # ===== SHEET 2: Individual Performance =====
-        if 'QA Score' not in filtered_data.columns:
-            filtered_data['QA Score'] = float('nan')
+        if 'QA Score' not in export_df.columns:
+            export_df['QA Score'] = float('nan')
         
-        agent_perf = filtered_data.groupby('Name of Call Centre Officer').agg({
+        agent_perf = export_df.groupby('Name of Call Centre Officer').agg({
             'QA Score': 'mean',
             'Id': 'count'
         }).reset_index()
@@ -915,8 +946,8 @@ with tab5:
         
         grand_total = pd.DataFrame({
             'Row Labels': ['Grand Total'],
-            'Average of QA Score': [filtered_data['QA Score'].mean()],
-            'Count of Name of Call Centre Officer': [len(filtered_data)]
+            'Average of QA Score': [export_df['QA Score'].mean()],
+            'Count of Name of Call Centre Officer': [len(export_df)]
         })
         agent_perf = pd.concat([agent_perf, grand_total], ignore_index=True)
         
@@ -933,13 +964,13 @@ with tab5:
         
         # ===== SHEET 3: Trend =====
         ws_trend = writer.book.create_sheet('Trend')
-        total_records = len(filtered_data)
+        total_records = len(export_df)
         
         # Calculate performance for each metric
         metric_performance = []
         for short_name, full_name in quality_columns:
-            if full_name in filtered_data.columns:
-                yes_count = (filtered_data[full_name] == 'Yes').sum()
+            if full_name in export_df.columns:
+                yes_count = (export_df[full_name] == 'Yes').sum()
             else:
                 yes_count = 0
             performance = (yes_count / total_records) if total_records > 0 else 0
@@ -1012,7 +1043,7 @@ with tab5:
         cell_b5.font = black_font
         cell_b5.border = thin_border
         
-        avg_qi = filtered_data['QA Score'].mean() if len(filtered_data) > 0 else 0
+        avg_qi = export_df['QA Score'].mean() if len(export_df) > 0 else 0
         cell_c5 = ws_trend.cell(row=5, column=3, value=round(avg_qi, 2))
         cell_c5.font = black_font
         cell_c5.alignment = Alignment(horizontal='right')
@@ -1276,6 +1307,7 @@ with tab6:
     else:
         completed_files = set(audit_data['File_Name'].dropna().astype(str)) if 'File_Name' in audit_data.columns else set()
         unfinished_df = all_assignments[~all_assignments['File_Name'].astype(str).isin(completed_files)].copy()
+        unfinished_df = unfinished_df.reset_index(drop=True)
 
         # Persist the current unfinished-calls snapshot, auditor name included
         os.makedirs(UNFINISHED_CALLS_DIR, exist_ok=True)
