@@ -779,7 +779,7 @@ with tab3:
         st.plotly_chart(fig_volume, use_container_width=True)
 
 # Tab 4: Comments
-with tab4:
+with tabs[3]:
     comments_col = 'Do you have any other comments you would like to share?'
 
     base_cols = ['Name of Call Centre Officer', 'Total Score', 'QA Score', comments_col]
@@ -825,7 +825,7 @@ with tab4:
             st.info("No comments found for the selected filters.")
 
 # Tab 5: Raw Data
-with tab5:
+with tabs[4]:
     st.subheader("Raw Audit Data")
 
     col_refresh, col_note = st.columns([1, 3])
@@ -902,8 +902,22 @@ with tab5:
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         # ===== SHEET 1: Main Audit Data =====
         export_cols = [
-            col for col in filtered_data.columns
-            if col not in ['Base', 'Contact', 'Derived_Total_Score', 'Derived_Score_Percent', 'Derived_Fatal_Flag']
+            col for col in [
+                'Id',
+                'Audit_Timestamp',
+                'Name of Call Centre Officer',
+                'Name of caller',
+                'Purpose of call',
+                'Did CCO open the call using the appropriate greetings?',
+                'Was the CCO able to identify and verify the needs of the customer?',
+                'Was the CCO able to educate & inform the customer about the query/enquiry/request',
+                'Did the CCO ensure and confirm the necessary steps to query resolution?',
+                'Was the CCO polite & courteous?',
+                'Did the CCO end the call politely and professionally?',
+                'Total Score',
+                'QA Score',
+                'Do you have any other comments you would like to share?'
+            ] if col in filtered_data.columns
         ]
         export_df = filtered_data[export_cols].copy()
         export_df = export_df.reset_index(drop=True)
@@ -1375,7 +1389,7 @@ with tab5:
     )
 
 # Tab 6: Unfinished Calls
-with tab6:
+with tabs[5]:
     st.subheader("🕒 Unfinished Calls by Auditor")
 
     all_assignments = load_existing_assignments()

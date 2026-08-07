@@ -17,6 +17,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOGO_PATH = os.path.join(BASE_DIR, "Logos", "logo.png")
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
+AUDIT_LOG_DIR = os.path.join(BASE_DIR, "Audit_log_calls")
 DEFAULT_CALLS_FOLDER = r"F:\Programimg projects\QA call audit tool\recorded calls"
 UNFINISHED_CALLS_DIR = os.path.join(BASE_DIR, "unfinished calls")
 UNFINISHED_CALLS_FILE = os.path.join(UNFINISHED_CALLS_DIR, "unfinished_calls.xlsx")
@@ -53,8 +54,9 @@ cookie_manager = CookieManager(key="qa_app_home_cookie_manager")
 authenticator = stauth.Authenticate(
     credentials=credentials,
     cookie_name=SHARED_COOKIE_NAME,
-    key=SHARED_COOKIE_KEY,
-    expiry_days=1,
+    cookie_key=SHARED_COOKIE_KEY,
+    cookie_expiry_days=1,
+    auto_hash=False,
     cookie_manager=cookie_manager
 )
 
@@ -264,7 +266,7 @@ if app_mode == "🏠 Home":
     st.subheader("Quick Stats")
     
     try:
-        audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
+        audit_files = glob.glob(os.path.join(AUDIT_LOG_DIR, "audit_log_*.xlsx"))
         if audit_files:
             dfs = []
             for file in audit_files:
@@ -466,7 +468,7 @@ elif app_mode == "🛠️ Tool":
             my_assignments = assignment_pool.copy()
 
     completed_files = set()
-    for log_file in glob.glob("Audit_log_calls/audit_log_*.xlsx"):
+    for log_file in glob.glob(os.path.join(AUDIT_LOG_DIR, "audit_log_*.xlsx")):
         try:
             log_df = pd.read_excel(log_file)
             if "File_Name" in log_df.columns:
@@ -863,11 +865,29 @@ elif app_mode == "🛠️ Tool":
     
                         # Quality metrics
                         total_score = 0
-                        for q, score in quality_questions:
+                        for q, max_score in quality_questions:
                             answer = form_data.get(f"{q}_{i}", '')
                             selected_save.at[i, q] = answer
-                            if answer == "Yes":
-                                total_score += score
+
+                            if answer in {"", None}:
+                                continue
+
+                            normalized = str(answer).strip().lower()
+                            if normalized in {"yes", "y"}:
+                                total_score += max_score
+                                continue
+                            if normalized in {"na", "n/a", "not applicable", "not_applicable"}:
+                                total_score += max_score
+                                continue
+                            if normalized in {"fatal", "f"}:
+                                continue
+                            if normalized in {"no", "n"}:
+                                continue
+
+                            try:
+                                total_score += float(normalized)
+                            except (TypeError, ValueError):
+                                continue
     
                         # Other fields
                         selected_save.at[i, 'Do you have any other comments you would like to share?'] = form_data.get(f"comments_{i}", '')
@@ -884,8 +904,8 @@ elif app_mode == "🛠️ Tool":
                     try:
                         timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                         selected_save["Audit_Timestamp"] = timestamp
-                        filename = f"Audit_log_calls/audit_log_{timestamp}.xlsx"
-                        os.makedirs("Audit_log_calls", exist_ok=True)
+                        os.makedirs(AUDIT_LOG_DIR, exist_ok=True)
+                        filename = os.path.join(AUDIT_LOG_DIR, f"audit_log_{timestamp}.xlsx")
                         sanitize_dataframe_for_excel(selected_save).to_excel(filename, index=False)
                         st.success(f"✅ Audit log saved successfully! File: {filename}")
                     except Exception as e:
@@ -946,27 +966,35 @@ elif app_mode == "📊 Dashboard":
         st.rerun()
 
     st.title("📊 QA Audit Dashboard")
-    
-    # Load and combine all audit log files into audit_data
-    audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
+
+    # Load only the latest audit log file as the dashboard source of truth.
+    audit_files = sorted(
+        glob.glob(os.path.join(AUDIT_LOG_DIR, "audit_log_*.xlsx")),
+        key=os.path.getmtime,
+        reverse=True,
+    )
     if not audit_files:
         st.error("No audit log files found. Please ensure audit_log_*.xlsx files are present.")
         st.stop()
-    
-    dfs = []
+
+    latest_audit_file = None
+    latest_audit_df = None
     for file in audit_files:
         try:
-            df = pd.read_excel(file)
-            dfs.append(df)
+            latest_audit_df = pd.read_excel(file)
+            latest_audit_file = file
+            break
         except Exception as e:
             st.warning(f"Could not read {file}: {e}")
-    
-    if not dfs:
+
+    if latest_audit_df is None or latest_audit_df.empty:
         st.error("No valid audit log data loaded.")
         st.stop()
-    
-    audit_data = pd.concat(dfs, ignore_index=True)
-    
+
+    audit_data = latest_audit_df.copy()
+    if latest_audit_file:
+        st.caption(f"Showing data from the latest audit log: {os.path.basename(latest_audit_file)}")
+
     # Try to infer a consistent datetime format for 'Audit_Timestamp' to avoid the warning
     if 'Audit_Timestamp' in audit_data.columns:
         ts = pd.to_datetime(audit_data['Audit_Timestamp'], format="%d/%m/%Y %H:%M", errors='coerce')

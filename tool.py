@@ -15,6 +15,7 @@ import streamlit_authenticator as stauth
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 ASSIGNMENTS_DIR = os.path.join(BASE_DIR, "Call_Assignments")
 ASSIGNMENTS_FILE = os.path.join(ASSIGNMENTS_DIR, "call_assignments.xlsx")
+AUDIT_LOG_DIR = os.path.join(BASE_DIR, "Audit_log_calls")
 DEFAULT_CALLS_FOLDER = r"F:\Programimg projects\QA call audit tool\recorded calls"
 
 SHARED_COOKIE_NAME = "qa_audit_platform_session"
@@ -48,8 +49,9 @@ cookie_manager = CookieManager(key="qa_app_tool_cookie_manager")
 authenticator = stauth.Authenticate(
     credentials=credentials,
     cookie_name=SHARED_COOKIE_NAME,
-    key=SHARED_COOKIE_KEY,
-    expiry_days=1,
+    cookie_key=SHARED_COOKIE_KEY,
+    cookie_expiry_days=1,
+    auto_hash=False,
     cookie_manager=cookie_manager
 )
 
@@ -335,7 +337,7 @@ elif user_role == "auditor":
     show_audit_form()
 
 # Load and combine all audit log files into audit_data
-audit_files = glob.glob("Audit_log_calls/audit_log_*.xlsx")
+audit_files = glob.glob(os.path.join(AUDIT_LOG_DIR, "audit_log_*.xlsx"))
 if not audit_files:
     st.error("No audit log files found. Please ensure audit_log_*.xlsx files are present.")
     st.stop()
@@ -687,9 +689,10 @@ if folder_path and os.path.isdir(folder_path):
                 st.dataframe(selected_save)
 
                 try:
+                    os.makedirs(AUDIT_LOG_DIR, exist_ok=True)
                     timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
                     selected_save["Audit_Timestamp"] = timestamp
-                    filename = f"audit_log_{timestamp}.xlsx"
+                    filename = os.path.join(AUDIT_LOG_DIR, f"audit_log_{timestamp}.xlsx")
                     sanitize_dataframe_for_excel(selected_save).to_excel(filename, index=False)
                     st.success(f"Audit selections saved successfully! File: {filename}")
                 except Exception as e:
