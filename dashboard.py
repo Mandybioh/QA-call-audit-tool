@@ -309,6 +309,79 @@ if user_role == "supervisor":
 
 # Load the latest audit log file as the dashboard source of truth.
 # This prevents older audit runs from continuing to appear in the current dashboard view.
+QUALITY_METRIC_SCORES = [
+    ("Did CCO open the call using the appropriate greetings?", 3),
+    ("Was the CCO able to identify and verify the needs of the customer?", 4),
+    ("Was the CCO able to educate & inform the customer about the query/enquiry/request", 15),
+    ("Did the CCO ensure and confirm the necessary steps to query resolution?", 5),
+    ("Did the CCO accept responsibility for the query? (CAN DO)", 5),
+    ("Did the CCO speak clearly and fluently throughout the call?", 5),
+    ("Was the CCO professional?", 15),
+    ("Was the CCO able to communicate effectively through effective listening and troubleshooting?", 15),
+    ("Was the CCO polite & courteous?", 10),
+    ("Did the CCO show empathy? (introduce solution statement)", 15),
+    ("Did the CCO ask if you had any further needs?", 5),
+    ("Did the CCO end the call politely and professionally?", 3),
+]
+
+
+def _derive_audit_scores(df: pd.DataFrame) -> pd.DataFrame:
+    """Derive dashboard scores from the metric columns using the same NA/Fatal rules as the workbook export."""
+    derived = df.copy()
+    total_scores = []
+    fatal_flags = []
+    score_percentages = []
+
+    for _, row in derived.iterrows():
+        total_score = 0
+        fatal = False
+
+        for metric_col, max_score in QUALITY_METRIC_SCORES:
+            if metric_col not in derived.columns:
+                continue
+
+            raw_value = row.get(metric_col)
+            if pd.isna(raw_value):
+                continue
+
+            value = str(raw_value).strip()
+            if not value:
+                continue
+
+            lowered = value.lower()
+            if lowered in {"fatal", "f"}:
+                fatal = True
+                continue
+            if lowered in {"na", "n/a", "not applicable", "not_applicable"}:
+                total_score += max_score
+                continue
+            if lowered in {"yes", "y"}:
+                total_score += max_score
+                continue
+            if lowered in {"no", "n"}:
+                continue
+
+            try:
+                total_score += float(value)
+            except (TypeError, ValueError):
+                continue
+
+        total_scores.append(total_score)
+        fatal_flags.append("Fatal" if fatal else "-")
+        score_percentages.append(0.0 if fatal else (total_score / 100.0 if total_score > 0 else 0.0))
+
+    derived["Derived_Total_Score"] = total_scores
+    derived["Derived_Score_Percent"] = score_percentages
+    derived["Derived_Fatal_Flag"] = fatal_flags
+
+    if "Total Score" in derived.columns:
+        derived["Total Score"] = pd.to_numeric(derived["Derived_Total_Score"], errors="coerce")
+    if "QA Score" in derived.columns:
+        derived["QA Score"] = pd.to_numeric(derived["Derived_Score_Percent"], errors="coerce")
+
+    return derived
+
+
 if os.path.exists(AUDIT_LOG_DIR):
     audit_files = sorted(glob.glob(os.path.join(AUDIT_LOG_DIR, "audit_log_*.xlsx")), key=os.path.getmtime, reverse=True)
 else:
@@ -370,6 +443,7 @@ def _normalize_audit_data(df: pd.DataFrame) -> pd.DataFrame:
     return normalized
 
 audit_data = _normalize_audit_data(audit_data)
+audit_data = _derive_audit_scores(audit_data)
 
 st.title("📊 QA Audit Dashboard")
 
@@ -827,7 +901,10 @@ with tab5:
     
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
         # ===== SHEET 1: Main Audit Data =====
-        export_cols = [col for col in filtered_data.columns if col not in ['Base', 'Contact']]
+        export_cols = [
+            col for col in filtered_data.columns
+            if col not in ['Base', 'Contact', 'Derived_Total_Score', 'Derived_Score_Percent', 'Derived_Fatal_Flag']
+        ]
         export_df = filtered_data[export_cols].copy()
         export_df = export_df.reset_index(drop=True)
         sanitize_dataframe_for_excel(export_df).to_excel(writer, sheet_name=month_year, index=False, startrow=4)
